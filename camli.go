@@ -23,7 +23,7 @@ func NewCamliImageSource(cn string) (*CamliImageSource, error) {
 
 func (is *CamliImageSource) GetImages() ([]Image, error) {
 	sq := search.SearchQuery{
-		Expression: "is:image has:location",
+		Expression: "has:location",
 		Describe: &search.DescribeRequest{
 			Rules: []*search.DescribeRule{
 				{
@@ -49,4 +49,8 @@ func (is *CamliImageSource) GetImages() ([]Image, error) {
 		}
 	}
 	return r, nil
+}
+
+func (is *CamliImageSource) Close() error {
+	return is.c.Close()
 }

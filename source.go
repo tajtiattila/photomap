@@ -1,9 +1,11 @@
 package main
 
 type Image struct {
-	Lat, Lng float64
+	Lat float64 `json:"lat"`
+	Lng float64 `json:"lng"`
 }
 
 type ImageSource interface {
-	GetImages() []Image
+	GetImages() ([]Image, error)
+	Close() error
 }
