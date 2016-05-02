@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 
 	"camlistore.org/pkg/client"
@@ -41,6 +42,7 @@ func (is *CamliImageSource) GetImages() ([]Image, error) {
 		db := sr.Describe.Meta[srb.Blob.String()]
 		if db.Permanode != nil {
 			pna := db.Permanode.Attr
+			fmt.Printf("%+v\n", db.Permanode)
 			lat, err1 := strconv.ParseFloat(pna.Get(nodeattr.Latitude), 64)
 			lng, err2 := strconv.ParseFloat(pna.Get(nodeattr.Longitude), 64)
 			if err1 == nil && err2 == nil {
