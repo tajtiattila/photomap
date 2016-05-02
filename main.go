@@ -43,9 +43,18 @@ func main() {
 		log.Fatal("no image source specified")
 	}
 
-	vim, err := is.GetImages()
+	vii, err := is.GetImages()
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	type img struct {
+		Lat  float64 `json:"lat"`
+		Long float64 `json:"lng"`
+	}
+	vim := make([]img, len(vii))
+	for i, ii := range vii {
+		vim[i].Lat, vim[i].Long = ii.LatLong()
 	}
 
 	ist := time.Now()

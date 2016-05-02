@@ -2,8 +2,11 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"strconv"
+	"time"
 
+	"camlistore.org/pkg/blob"
 	"camlistore.org/pkg/client"
 	"camlistore.org/pkg/schema/nodeattr"
 	"camlistore.org/pkg/search"
@@ -46,7 +49,12 @@ func (is *CamliImageSource) GetImages() ([]Image, error) {
 			lat, err1 := strconv.ParseFloat(pna.Get(nodeattr.Latitude), 64)
 			lng, err2 := strconv.ParseFloat(pna.Get(nodeattr.Longitude), 64)
 			if err1 == nil && err2 == nil {
-				r = append(r, Image{Lat: lat, Lng: lng})
+				r = append(r, &camliImage{
+					pn:      srb.Blob,
+					modTime: db.Permanode.ModTime,
+					lat:     lat,
+					long:    lng,
+				})
 			}
 		}
 	}
@@ -55,4 +63,18 @@ func (is *CamliImageSource) GetImages() ([]Image, error) {
 
 func (is *CamliImageSource) Close() error {
 	return is.c.Close()
+}
+
+type camliImage struct {
+	pn        blob.Ref
+	modTime   time.Time
+	lat, long float64
+}
+
+func (i *camliImage) Id() string                   { return "camli://" + i.pn.String() }
+func (i *camliImage) ModTime() time.Time           { return i.modTime }
+func (i *camliImage) LatLong() (lat, long float64) { return i.lat, i.long }
+
+func (i *camliImage) Open() io.ReadCloser {
+	return ErrReadCloser(fmt.Errorf("not implemented"))
 }

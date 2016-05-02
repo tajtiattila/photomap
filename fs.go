@@ -1,9 +1,12 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/rwcarlsen/goexif/exif"
 )
@@ -48,7 +51,12 @@ func (is *FileSystemImageSource) prepare(root string) error {
 		if is.cache != nil {
 			cim, err := is.cache.Get(fp)
 			if err == nil && !info.ModTime().After(cim.ModTime) {
-				is.data = append(is.data, Image{Lat: cim.Lat, Lng: cim.Lng})
+				is.data = append(is.data, &fsImage{
+					absPath: fp,
+					modTime: cim.ModTime,
+					lat:     cim.Lat,
+					long:    cim.Lng,
+				})
 				return nil // cache valid
 			}
 		}
@@ -59,12 +67,13 @@ func (is *FileSystemImageSource) prepare(root string) error {
 			}
 			return nil // not an image, or no GPS info
 		}
-		is.data = append(is.data, *im)
+		is.data = append(is.data, im)
 		if is.cache != nil {
+			lat, long := im.LatLong()
 			err := is.cache.Put(fp, &CachedImage{
-				ModTime: info.ModTime(),
-				Lat:     im.Lat,
-				Lng:     im.Lng,
+				ModTime: im.ModTime(),
+				Lat:     lat,
+				Lng:     long,
 			})
 			if err != nil {
 				log.Println(err)
@@ -74,12 +83,16 @@ func (is *FileSystemImageSource) prepare(root string) error {
 	})
 }
 
-func readImage(fp string) (*Image, error) {
+func readImage(fp string) (Image, error) {
 	f, err := os.Open(fp)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
 	x, err := exif.Decode(f)
 	if err != nil {
 		return nil, err
@@ -88,5 +101,24 @@ func readImage(fp string) (*Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Image{Lat: lat, Lng: lng}, nil
+	return &fsImage{
+		absPath: fp,
+		modTime: fi.ModTime(),
+		lat:     lat,
+		long:    lng,
+	}, nil
+}
+
+type fsImage struct {
+	absPath   string
+	modTime   time.Time
+	lat, long float64
+}
+
+func (i *fsImage) Id() string                   { return "file://" + i.absPath }
+func (i *fsImage) ModTime() time.Time           { return i.modTime }
+func (i *fsImage) LatLong() (lat, long float64) { return i.lat, i.long }
+
+func (i *fsImage) Open() io.ReadCloser {
+	return ErrReadCloser(fmt.Errorf("not implemented"))
 }
