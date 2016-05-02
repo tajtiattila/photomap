@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"camlistore.org/pkg/blob"
@@ -14,7 +16,16 @@ import (
 
 type CamliImageSource struct {
 	c *client.Client
+
+	inf map[string]camliInfo
 }
+
+type camliInfo struct {
+	ImageInfo
+	content blob.Ref
+}
+
+const camliprefix = "camli:"
 
 func NewCamliImageSource(cn string) (*CamliImageSource, error) {
 	c := client.New(cn)
@@ -22,10 +33,10 @@ func NewCamliImageSource(cn string) (*CamliImageSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &CamliImageSource{c}, nil
+	return &CamliImageSource{c, make(map[string]camliInfo)}, nil
 }
 
-func (is *CamliImageSource) GetImages() ([]Image, error) {
+func (is *CamliImageSource) ModTimes() (map[string]time.Time, error) {
 	sq := search.SearchQuery{
 		Expression: "has:location",
 		Describe: &search.DescribeRequest{
@@ -40,41 +51,54 @@ func (is *CamliImageSource) GetImages() ([]Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := make([]Image, 0, len(sr.Blobs))
+	r := make(map[string]time.Time)
 	for _, srb := range sr.Blobs {
 		db := sr.Describe.Meta[srb.Blob.String()]
-		if db.Permanode != nil {
-			pna := db.Permanode.Attr
-			fmt.Printf("%+v\n", db.Permanode)
-			lat, err1 := strconv.ParseFloat(pna.Get(nodeattr.Latitude), 64)
-			lng, err2 := strconv.ParseFloat(pna.Get(nodeattr.Longitude), 64)
-			if err1 == nil && err2 == nil {
-				r = append(r, &camliImage{
-					pn:      srb.Blob,
-					modTime: db.Permanode.ModTime,
-					lat:     lat,
-					long:    lng,
-				})
-			}
+		contentRef, ok := db.ContentRef()
+		if !ok || db.Permanode == nil {
+			continue
+		}
+		pna := db.Permanode.Attr
+		fmt.Printf("%+v\n", db.Permanode)
+		lat, err1 := strconv.ParseFloat(pna.Get(nodeattr.Latitude), 64)
+		lng, err2 := strconv.ParseFloat(pna.Get(nodeattr.Longitude), 64)
+		if err1 != nil && err2 != nil {
+			continue
+		}
+		id := camliprefix + srb.Blob.String()
+		r[id] = db.Permanode.ModTime
+		is.inf[id] = camliInfo{
+			ImageInfo{
+				ModTime: db.Permanode.ModTime,
+				Lat:     lat,
+				Long:    lng,
+			},
+			contentRef,
 		}
 	}
 	return r, nil
 }
 
+func (is *CamliImageSource) Info(id string) (ii ImageInfo, err error) {
+	ci, ok := is.inf[id]
+	if !ok {
+		return ii, os.ErrNotExist
+	}
+	return ci.ImageInfo, nil
+}
+
+func (is *CamliImageSource) Open(id string) (io.ReadCloser, error) {
+	if !strings.HasPrefix(id, camliprefix) {
+		return nil, os.ErrNotExist
+	}
+	ref, ok := blob.Parse(strings.TrimPrefix(id, camliprefix))
+	if !ok {
+		return nil, os.ErrNotExist
+	}
+	rc, _, err := is.c.Fetch(ref)
+	return rc, err
+}
+
 func (is *CamliImageSource) Close() error {
 	return is.c.Close()
-}
-
-type camliImage struct {
-	pn        blob.Ref
-	modTime   time.Time
-	lat, long float64
-}
-
-func (i *camliImage) Id() string                   { return "camli://" + i.pn.String() }
-func (i *camliImage) ModTime() time.Time           { return i.modTime }
-func (i *camliImage) LatLong() (lat, long float64) { return i.lat, i.long }
-
-func (i *camliImage) Open() io.ReadCloser {
-	return ErrReadCloser(fmt.Errorf("not implemented"))
 }
