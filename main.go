@@ -44,12 +44,14 @@ func main() {
 	}
 	defer ic.Close()
 
+	tm := NewTileMap(ic)
+
 	type img struct {
 		Lat  float64 `json:"lat"`
 		Long float64 `json:"lng"`
 	}
-	vim := make([]img, 0, len(ic.GetImages()))
-	for _, ii := range ic.GetImages() {
+	vim := make([]img, 0, len(ic.Images()))
+	for _, ii := range ic.Images() {
 		vim = append(vim, img{ii.Lat, ii.Long})
 	}
 
@@ -70,6 +72,8 @@ func main() {
 		}
 		http.ServeContent(w, r, "photos.json", ist, bytes.NewReader(buf.Bytes()))
 	})
+
+	http.Handle("/tiles/", tm)
 
 	log.Println("Listening on", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))

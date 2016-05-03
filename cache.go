@@ -33,7 +33,7 @@ func NewImageCache(src ImageSource) (*ImageCache, error) {
 	return ic, ic.init()
 }
 
-func (ic *ImageCache) GetImages() map[string]ImageInfo {
+func (ic *ImageCache) Images() map[string]ImageInfo {
 	return ic.m
 }
 
