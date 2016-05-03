@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"path/filepath"
-	"time"
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/tajtiattila/basedir"
@@ -98,15 +97,4 @@ func (ic *ImageCache) init() error {
 type cacheEntry struct {
 	ImageInfo
 	IsErr bool
-}
-
-type ImageInfoCache interface {
-	Get(id string) (*CachedImage, error)
-	Put(id string, cim *CachedImage) error
-	Close() error
-}
-
-type CachedImage struct {
-	ModTime  time.Time
-	Lat, Lng float64
 }
