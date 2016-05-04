@@ -50,11 +50,11 @@ func (t *Thumber) PhotoIcon(r io.Reader) (image.Image, error) {
 	pdy := tdy + 2*t.border
 
 	// full frame size, accounting for shadow shift and blur
-	fx := pdx + 2*t.sblur + iabs(t.sdx)
-	fy := pdy + 2*t.sblur + iabs(t.sdy)
+	fx := pdx + 4*t.sblur + iabs(t.sdx)
+	fy := pdy + 4*t.sblur + iabs(t.sdy)
 
 	// thumb origin
-	tx, ty := t.sblur+t.border, t.sblur+t.border
+	tx, ty := 2*t.sblur+t.border, 2*t.sblur+t.border
 	if t.sdx < 0 {
 		tx += t.sdx
 	}

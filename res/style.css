@@ -1,7 +1,8 @@
 /* Set a size for our map container, the Google Map will take up 100% of this container */
 #map {
   position:absolute;
-  left:25%;
-  width:75%;
+  /*left:25%;
+  width:75%;*/
+  left:0;right:0;
   top:0;bottom:0;
 }

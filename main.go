@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"html/template"
+	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -15,6 +19,11 @@ func main() {
 	flag.StringVar(&addr, "addr", ":6677", "listen address")
 	flag.StringVar(&camsrc, "camli", "", "use camlistore server as source")
 	flag.Parse()
+
+	gmapsapikey := os.Getenv("GOOGLEMAPS_APIKEY")
+	if gmapsapikey == "" {
+		log.Fatal("GOOGLEMAPS_APIKEY environment variable unset")
+	}
 
 	var is ImageSource
 	var err error
@@ -62,7 +71,12 @@ func main() {
 		panic(err)
 	}
 
-	http.Handle("/", http.FileServer(http.Dir(p)))
+	templateData := struct {
+		GoogleMapsApiKey string
+	}{
+		gmapsapikey,
+	}
+	http.Handle("/", http.FileServer(&templateDir{p, templateData}))
 
 	http.HandleFunc("/photos.json", func(w http.ResponseWriter, r *http.Request) {
 		buf := new(bytes.Buffer)
@@ -77,4 +91,47 @@ func main() {
 
 	log.Println("Listening on", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
+}
+
+// templateDir is like http.Dir but applies
+// the template arguments to html files.
+type templateDir struct {
+	root string
+	data interface{} // template data
+}
+
+func (td *templateDir) Open(name string) (http.File, error) {
+	f, err := http.Dir(td.root).Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.HasSuffix(name, ".html") {
+		return f, nil
+	}
+	src, err := ioutil.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	t, err := template.New(name).Parse(string(src))
+	if err != nil {
+		return nil, err
+	}
+	buf := new(bytes.Buffer)
+	if err := t.Execute(buf, td.data); err != nil {
+		return nil, err
+	}
+	return &templateFile{f, bytes.NewReader(buf.Bytes())}, nil
+}
+
+type templateFile struct {
+	http.File
+	r *bytes.Reader
+}
+
+func (f *templateFile) Read(p []byte) (n int, err error) {
+	return f.r.Read(p)
+}
+
+func (f *templateFile) Seek(offset int64, whence int) (int64, error) {
+	return f.r.Seek(offset, whence)
 }
