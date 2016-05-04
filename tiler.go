@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"image"
-	"image/color"
+	"image/draw"
+	_ "image/jpeg"
 	"image/png"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -20,9 +22,10 @@ const tmQtMinDist = 1e-6 // 6 digits of latitude is 11 cm on the equator
 const TileSize = 256
 
 type TileMap struct {
+	ic *ImageCache
 	qt *quadtree.Quadtree
 
-	vii []ImageInfo
+	vii []idImageInfo
 
 	mtx sync.Mutex // protect gentiles
 	gen map[string]*genTile
@@ -33,12 +36,13 @@ type TileMap struct {
 func NewTileMap(ic *ImageCache) *TileMap {
 	m := ic.Images()
 
-	v := make([]ImageInfo, 0, len(m))
-	for _, ii := range m {
-		v = append(v, ii)
+	v := make([]idImageInfo, 0, len(m))
+	for k, ii := range m {
+		v = append(v, idImageInfo{k, ii})
 	}
 
 	return &TileMap{
+		ic:        ic,
 		qt:        quadtree.New(imageInfoQS(v), quadtree.MinDist(tmQtMinDist)),
 		vii:       v,
 		gen:       make(map[string]*genTile),
@@ -87,7 +91,7 @@ func (tm *TileMap) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (tm *TileMap) generate(x, y, zoom int) []byte {
-	const radius = 8
+	const radius = 20
 
 	// safety gap for elements hanging over tile boundaries
 	const gap = (radius * 1.5) / TileSize
@@ -106,36 +110,24 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 		panic("invalid")
 	}
 
-	im := image.NewNRGBA(image.Rect(0, 0, TileSize, TileSize))
-	n := 0
+	im := image.NewRGBA(image.Rect(0, 0, TileSize, TileSize))
 	tm.qt.NearFunc(lami, lomi, lama, loma, func(i int) bool {
 		ii := tm.vii[i]
 		x, y := t.Tile(ii.Lat, ii.Long)
 		px := int((x - xo) * TileSize)
 		py := int((y - yo) * TileSize)
-		sx, ex := px-radius, px+radius
-		sy, ey := py-radius, py+radius
-		if sx < 0 {
-			sx = 0
+
+		thumb, err := tm.ic.PhotoIcon(ii.Id)
+		if err != nil {
+			log.Printf("can't get photo icon for %s: %s", ii.Id, err)
+			return true
 		}
-		if sy < 0 {
-			sy = 0
-		}
-		if TileSize <= ex {
-			ex = TileSize - 1
-		}
-		if TileSize <= ey {
-			ey = TileSize - 1
-		}
-		for y := sy; y <= ey; y++ {
-			for x := sx; x <= ex; x++ {
-				dx, dy := x-px, y-py
-				if dx*dx+dy*dy < radius*radius {
-					im.SetNRGBA(x, y, color.NRGBA{255, 0, 0, 255})
-				}
-			}
-		}
-		n++
+
+		dx := thumb.Bounds().Dx()
+		dy := thumb.Bounds().Dy()
+		x0 := px - dx/2
+		y0 := py - dy/2
+		draw.Draw(im, image.Rect(x0, y0, x0+dx, y0+dy), thumb, thumb.Bounds().Min, draw.Over)
 		return true
 	})
 	buf := new(bytes.Buffer)
@@ -146,7 +138,12 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 	return buf.Bytes()
 }
 
-type imageInfoQS []ImageInfo
+type idImageInfo struct {
+	Id string
+	ImageInfo
+}
+
+type imageInfoQS []idImageInfo
 
 func (s imageInfoQS) Len() int                { return len(s) }
 func (s imageInfoQS) At(i int) (x, y float64) { return s[i].Lat, s[i].Long }
