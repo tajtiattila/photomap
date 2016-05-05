@@ -8,6 +8,7 @@ import (
 	"io"
 
 	"github.com/nfnt/resize"
+	"github.com/tajtiattila/blur"
 )
 
 type Thumber struct {
@@ -34,14 +35,25 @@ func NewThumber() *Thumber {
 	}
 }
 
-func (t *Thumber) PhotoIcon(r io.Reader) (image.Image, error) {
+func (t *Thumber) Thumb(r io.Reader) (image.Image, error) {
 	im, _, err := image.Decode(r)
 	if err != nil {
 		return nil, err
 	}
 	dx, dy := t.sizeFor(im.Bounds())
 	thumb := resize.Resize(uint(dx), uint(dy), im, resize.Bilinear)
+	return thumb, nil
+}
 
+func (t *Thumber) PhotoIcon(r io.Reader) (image.Image, error) {
+	thumb, err := t.Thumb(r)
+	if err != nil {
+		return nil, err
+	}
+	return t.PhotoIconFromThumb(thumb), nil
+}
+
+func (t *Thumber) PhotoIconFromThumb(thumb image.Image) image.Image {
 	tdx := thumb.Bounds().Dx()
 	tdy := thumb.Bounds().Dy()
 
@@ -73,7 +85,7 @@ func (t *Thumber) PhotoIcon(r io.Reader) (image.Image, error) {
 			framed.SetRGBA(xx, yy, shadow)
 		}
 	}
-	gaussianBlur(framed, framed, t.sblur)
+	framed = blur.Gaussian(framed, t.sblur, blur.ReuseSrc)
 
 	// paint white background
 	white := color.RGBA{255, 255, 255, 255}
@@ -86,7 +98,7 @@ func (t *Thumber) PhotoIcon(r io.Reader) (image.Image, error) {
 	// copy thumb to framed shadow
 	draw.Draw(framed, image.Rect(tx, ty, tx+tdx, ty+tdy), thumb, image.Pt(0, 0), draw.Src)
 
-	return framed, nil
+	return framed
 }
 
 func (t *Thumber) sizeFor(bounds image.Rectangle) (dx, dy int) {
