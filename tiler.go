@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tajtiattila/photomap/imagecache"
 	"github.com/tajtiattila/photomap/quadtree"
 )
 
@@ -22,10 +23,10 @@ const tmQtMinDist = 1e-6 // 6 digits of latitude is 11 cm on the equator
 const TileSize = 256
 
 type TileMap struct {
-	ic *ImageCache
+	ic *imagecache.ImageCache
 	qt *quadtree.Quadtree
 
-	vii []idImageInfo
+	images []imagecache.ImageInfo
 
 	mtx sync.Mutex // protect gentiles
 	gen map[string]*genTile
@@ -33,18 +34,12 @@ type TileMap struct {
 	starttime time.Time
 }
 
-func NewTileMap(ic *ImageCache) *TileMap {
-	m := ic.Images()
-
-	v := make([]idImageInfo, 0, len(m))
-	for k, ii := range m {
-		v = append(v, idImageInfo{k, ii})
-	}
-
+func NewTileMap(ic *imagecache.ImageCache) *TileMap {
+	images := ic.Images()
 	return &TileMap{
 		ic:        ic,
-		qt:        quadtree.New(imageInfoQS(v), quadtree.MinDist(tmQtMinDist)),
-		vii:       v,
+		qt:        quadtree.New(imageInfoQS(images), quadtree.MinDist(tmQtMinDist)),
+		images:    images,
 		gen:       make(map[string]*genTile),
 		starttime: time.Now(),
 	}
@@ -112,7 +107,7 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 
 	im := image.NewRGBA(image.Rect(0, 0, TileSize, TileSize))
 	tm.qt.NearFunc(lami, lomi, lama, loma, func(i int) bool {
-		ii := tm.vii[i]
+		ii := tm.images[i]
 		x, y := t.Tile(ii.Lat, ii.Long)
 		px := int((x - xo) * TileSize)
 		py := int((y - yo) * TileSize)
@@ -138,12 +133,7 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 	return buf.Bytes()
 }
 
-type idImageInfo struct {
-	Id string
-	ImageInfo
-}
-
-type imageInfoQS []idImageInfo
+type imageInfoQS []imagecache.ImageInfo
 
 func (s imageInfoQS) Len() int                { return len(s) }
 func (s imageInfoQS) At(i int) (x, y float64) { return s[i].Lat, s[i].Long }

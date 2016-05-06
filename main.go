@@ -12,6 +12,11 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/tajtiattila/photomap/imagecache"
+	"github.com/tajtiattila/photomap/source"
+	_ "github.com/tajtiattila/photomap/source/camlistore"
+	_ "github.com/tajtiattila/photomap/source/filesystem"
 )
 
 func main() {
@@ -25,10 +30,10 @@ func main() {
 		log.Fatal("GOOGLEMAPS_APIKEY environment variable unset")
 	}
 
-	var is ImageSource
+	var is source.ImageSource
 	var err error
 	if camsrc != "" {
-		is, err = NewCamliImageSource(camsrc)
+		is, err = source.Open("camlistore", camsrc)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -37,7 +42,7 @@ func main() {
 			log.Fatal("need path argument(s)")
 		}
 		var err error
-		is, err = NewFileSystemImageSource(flag.Args()...)
+		is, err = source.Open("filesystem", strings.Join(flag.Args(), string(os.PathSeparator)))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -47,7 +52,7 @@ func main() {
 		log.Fatal("no image source specified")
 	}
 
-	ic, err := NewImageCache(is)
+	ic, err := imagecache.New(is)
 	if err != nil {
 		log.Fatal(err)
 	}

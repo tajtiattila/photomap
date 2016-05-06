@@ -79,6 +79,11 @@ function init() {
       ]
     });
   });
+
+  // position/zoom to url
+  map.addListener('zoom_changed', function() {
+    console.log(["map zoom:", map.getZoom()].join(' '));
+  });
 }
 
 function getJSON(url, success) {

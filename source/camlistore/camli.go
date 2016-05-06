@@ -1,4 +1,4 @@
-package main
+package camlistore
 
 import (
 	"fmt"
@@ -12,7 +12,15 @@ import (
 	"camlistore.org/pkg/client"
 	"camlistore.org/pkg/schema/nodeattr"
 	"camlistore.org/pkg/search"
+
+	"github.com/tajtiattila/photomap/source"
 )
+
+func init() {
+	source.Register("camlistore", func(cn string) (source.ImageSource, error) {
+		return NewCamliImageSource(cn)
+	})
+}
 
 type CamliImageSource struct {
 	c *client.Client
@@ -21,7 +29,7 @@ type CamliImageSource struct {
 }
 
 type camliInfo struct {
-	ImageInfo
+	source.ImageInfo
 	content blob.Ref
 }
 
@@ -68,7 +76,7 @@ func (is *CamliImageSource) ModTimes() (map[string]time.Time, error) {
 		id := camliprefix + srb.Blob.String()
 		r[id] = db.Permanode.ModTime
 		is.inf[id] = camliInfo{
-			ImageInfo{
+			source.ImageInfo{
 				ModTime: db.Permanode.ModTime,
 				Lat:     lat,
 				Long:    lng,
@@ -79,7 +87,7 @@ func (is *CamliImageSource) ModTimes() (map[string]time.Time, error) {
 	return r, nil
 }
 
-func (is *CamliImageSource) Info(id string) (ii ImageInfo, err error) {
+func (is *CamliImageSource) Info(id string) (ii source.ImageInfo, err error) {
 	ci, ok := is.inf[id]
 	if !ok {
 		return ii, os.ErrNotExist

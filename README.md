@@ -10,9 +10,18 @@ If you have [Go](http://golang.org) photomap can be installed with:
 Then set the environment variable `GOOGLEMAPS_APIKEY` to your google maps api key,
 and start photomap with path(s) to your geotagged photos.
 
-TODO
-----
+Goals
+-----
+
+Short term
 
 - Group nearby photos together (avoid overlap)
 - Clickable photo icons
 - Add full screen photo view
+- Camlistore support
+
+Future
+
+- Ability to fix photo locations
+- Track logs as location source
+- Ability to fix photo times (incorrect camera time setting wrt tracks)

@@ -1,4 +1,4 @@
-package main
+package imagecache
 
 import (
 	"image"
@@ -40,7 +40,7 @@ func (t *Thumber) Thumb(r io.Reader) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	dx, dy := t.sizeFor(im.Bounds())
+	dx, dy := t.CalcSize(im.Bounds().Dx(), im.Bounds().Dy())
 	thumb := resize.Resize(uint(dx), uint(dy), im, resize.Bilinear)
 	return thumb, nil
 }
@@ -101,9 +101,8 @@ func (t *Thumber) PhotoIconFromThumb(thumb image.Image) image.Image {
 	return framed
 }
 
-func (t *Thumber) sizeFor(bounds image.Rectangle) (dx, dy int) {
-	sx := bounds.Dx()
-	sy := bounds.Dy()
+// calculate thumb dimensions
+func (t *Thumber) CalcSize(sx, sy int) (tx, ty int) {
 	if t.mw <= 0 && t.mh <= 0 {
 		panic("impossible")
 	}
@@ -122,13 +121,13 @@ func (t *Thumber) sizeFor(bounds image.Rectangle) (dx, dy int) {
 	}
 
 	if scaleForWidth {
-		dx = t.mw
-		dy = sy * dx / sx
+		tx = t.mw
+		ty = sy * tx / sx
 	} else {
-		dy = t.mh
-		dx = sx * dy / sy
+		ty = t.mh
+		tx = sx * ty / sy
 	}
-	return dx, dy
+	return tx, ty
 }
 
 func iabs(i int) int {

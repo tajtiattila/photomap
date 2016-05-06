@@ -1,4 +1,4 @@
-package main
+package imagecache
 
 import (
 	"bytes"
@@ -16,21 +16,35 @@ import (
 
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/tajtiattila/basedir"
+	"github.com/tajtiattila/photomap/source"
 )
 
+type ImageInfo struct {
+	// key for thumb/icon lookup
+	Id string `json:"id"`
+
+	// image dimensions
+	Width  int `json:"w,omitempty"`
+	Height int `json:"h,omitempty"`
+
+	// gps position
+	Lat  float64 `json:"lat,omitempty"`
+	Long float64 `json:"long,omitempty"`
+}
+
 type ImageCache struct {
-	src ImageSource
+	src source.ImageSource
 	db  *leveldb.DB
 
-	// keysrcid and m are read-only after initialized in init()
+	// keysrcid images are read-only after initialized in init()
 	keysrcid map[string]string
-	m        map[string]ImageInfo
+	images   []ImageInfo
 
 	pimtx sync.Mutex // protects pigen
 	pigen map[string]*genPhotoIcon
 }
 
-func NewImageCache(src ImageSource) (*ImageCache, error) {
+func New(src source.ImageSource) (*ImageCache, error) {
 	cachedir, err := basedir.Cache.EnsureDir("PhotoMap", 0700)
 	if err != nil {
 		return nil, err
@@ -43,14 +57,13 @@ func NewImageCache(src ImageSource) (*ImageCache, error) {
 		src:      src,
 		db:       db,
 		keysrcid: make(map[string]string),
-		m:        make(map[string]ImageInfo),
 		pigen:    make(map[string]*genPhotoIcon),
 	}
 	return ic, ic.init()
 }
 
-func (ic *ImageCache) Images() map[string]ImageInfo {
-	return ic.m
+func (ic *ImageCache) Images() []ImageInfo {
+	return ic.images
 }
 
 func (ic *ImageCache) Close() error {
@@ -82,7 +95,7 @@ func (ic *ImageCache) PhotoIcon(key string) (image.Image, error) {
 }
 
 func (ic *ImageCache) genPhotoIcon(pg *genPhotoIcon, key string) (image.Image, error) {
-	k := []byte("photoicon|" + key)
+	k := []byte(photoIconPfx + key)
 	data, err := ic.db.Get(k, nil)
 	switch err {
 	case nil:
@@ -140,15 +153,20 @@ func (ic *ImageCache) init() error {
 			return err
 		}
 		if !ce.IsErr {
-			ic.m[key] = ce.ImageInfo
+			ic.images = append(ic.images, ce.ImageInfo)
 		}
 	}
 
 	return nil
 }
 
-const imageInfoPfx = "imageinfo|"
+const (
+	imageInfoPfx = "imageinfo|"
+	photoIconPfx = "photoicon|"
+	thumbPfx     = "thumb|"
+)
 
+// load cache entry and refresh if needed
 func (ic *ImageCache) loadFreshCacheEntry(key, srcid string, mt time.Time) (cacheEntry, error) {
 	k := []byte(imageInfoPfx + key)
 	data, err := ic.db.Get(k, nil)
@@ -161,13 +179,27 @@ func (ic *ImageCache) loadFreshCacheEntry(key, srcid string, mt time.Time) (cach
 			// cache up to date
 			return ce, nil
 		}
+		err = ic.db.Delete([]byte(photoIconPfx+key), nil)
+		if err != nil && err != leveldb.ErrNotFound {
+			log.Printf("delete cached photo icon %q/%q: %v", key, srcid, err)
+		}
+		err = ic.db.Delete([]byte(thumbPfx+key), nil)
+		if err != nil && err != leveldb.ErrNotFound {
+			log.Printf("delete cached thumb %q/%q: %v", key, srcid, err)
+		}
 	}
 	ii, err := ic.src.Info(srcid)
 	ce := cacheEntry{SrcId: srcid}
 	if err != nil {
 		ce.IsErr = true
 	} else {
-		ce.ImageInfo = ii
+		ce.ImageInfo = ImageInfo{
+			Id:     key,
+			Width:  ii.Width,
+			Height: ii.Height,
+			Lat:    ii.Lat,
+			Long:   ii.Long,
+		}
 	}
 	data, err = json.Marshal(ce)
 	if err != nil {
@@ -218,6 +250,8 @@ func incByteArray(p []byte) {
 
 type cacheEntry struct {
 	SrcId string
+
+	ModTime time.Time
 	ImageInfo
 	IsErr bool
 }
