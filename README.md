@@ -1,6 +1,8 @@
 photomap
 ========
 
+Photomap shows your photos on a map using the Google Maps JavaScript API.
+
 ![Screenshot](/misc/screenshot.png)
 
 If you have [Go](http://golang.org) photomap can be installed with:
@@ -15,7 +17,6 @@ Goals
 
 Short term
 
-- Group nearby photos together (avoid overlap)
 - Clickable photo icons
 - Add full screen photo view
 - Camlistore support
