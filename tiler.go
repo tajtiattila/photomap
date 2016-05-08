@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tajtiattila/photomap/clusterer"
 	"github.com/tajtiattila/photomap/imagecache"
 	"github.com/tajtiattila/photomap/quadtree"
 )
@@ -27,7 +28,7 @@ type TileMap struct {
 	images []imagecache.ImageInfo
 
 	qt   *quadtree.Quadtree // for photo spots
-	tree *node              // for photo piles
+	tree *clusterer.Tree    // for photo piles
 
 	mtx sync.Mutex // protect gen
 	gen map[string]*genTile
@@ -44,12 +45,10 @@ func NewTileMap(ic *imagecache.ImageCache) *TileMap {
 	for i, im := range images {
 		pts[i] = point{im.Long, lat2merc(im.Lat)}
 	}
-	const mindist = photoMinSep
-	root := makeTree(pts, mindist)
 	return &TileMap{
 		ic:        ic,
-		qt:        quadtree.New(imageInfoQS(images), quadtree.MinDist(photoMinSep)),
-		tree:      root,
+		qt:        quadtree.New(iiarr(images), quadtree.MinDist(photoMinSep)),
+		tree:      clusterer.NewTree(iiarr(images), photoMinSep),
 		images:    images,
 		gen:       make(map[string]*genTile),
 		starttime: time.Now(),
@@ -123,7 +122,7 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 	im := image.NewRGBA(image.Rect(0, 0, TileSize, TileSize))
 
 	// draw spots
-	tm.qt.NearFunc(lami, lomi, lama, loma, func(i int) bool {
+	tm.qt.NearFunc(lomi, lat2merc(lami), loma, lat2merc(lama), func(i int) bool {
 		ii := tm.images[i]
 		x, y := t.Tile(ii.Lat, ii.Long)
 		px := int((x - xo) * TileSize)
@@ -153,8 +152,8 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 		y0 := int(py) - dy/2
 		draw.Draw(im, image.Rect(x0, y0, x0+dx, y0+dy), thumb, thumb.Bounds().Min, draw.Over)
 	}
-	query(tm.tree, lomi, lat2merc(lami), loma, lat2merc(lama), mindist, func(pt point, images []int) {
-		x, y := t.Tile(merc2lat(pt.y), pt.x)
+	tm.tree.Query(lomi, lat2merc(lami), loma, lat2merc(lama), mindist, func(pt clusterer.Point, images []int) {
+		x, y := t.Tile(merc2lat(pt.Y), pt.X)
 		px := (x - xo) * TileSize
 		py := (y - yo) * TileSize
 
@@ -169,7 +168,7 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 			}
 			area := float64(len(images)) * pilePhotoArea
 			rmax := math.Sqrt(float64(area) / math.Pi)
-			rgen := newRgen(pt.x, pt.y)
+			rgen := newRgen(pt.X, pt.Y)
 			for _, i := range images[1:] {
 				sin, cos := math.Sincos(2 * math.Pi * rgen.Float64())
 				r := math.Sqrt(rgen.Float64()) * rmax
@@ -187,10 +186,11 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 	return buf.Bytes()
 }
 
-type imageInfoQS []imagecache.ImageInfo
+type iiarr []imagecache.ImageInfo
 
-func (s imageInfoQS) Len() int                { return len(s) }
-func (s imageInfoQS) At(i int) (x, y float64) { return s[i].Lat, s[i].Long }
+func (s iiarr) Len() int                { return len(s) }
+func (s iiarr) At(i int) (x, y float64) { return s[i].Long, lat2merc(s[i].Lat) }
+func (s iiarr) Weight(i int) float64    { return 1 }
 
 type tiler struct {
 	m float64
