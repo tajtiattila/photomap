@@ -1,22 +1,19 @@
 // When the window has finished loading create our google map below
 google.maps.event.addDomListener(window, 'load', init);
-function init() {
+function initMap(mapElement, startAt, startZoom) {
   // Basic options for a simple Google Map
   // For more options see: https://developers.google.com/maps/documentation/javascript/reference#MapOptions
   var mapOptions = {
-      center: new google.maps.LatLng(46.0352637,18.3616772), // Baranya
-      zoom: 8,
+      center: startAt,
+      zoom: startZoom,
 
+      minZoom: 3,
       scaleControl: true,
 
       // How you would like to style the map. 
       // This is where you would paste any style found on Snazzy Maps.
       styles: [{"featureType":"landscape","stylers":[{"saturation":-100},{"lightness":65},{"visibility":"on"}]},{"featureType":"poi","stylers":[{"saturation":-100},{"lightness":51},{"visibility":"simplified"}]},{"featureType":"road.highway","stylers":[{"saturation":-100},{"visibility":"simplified"}]},{"featureType":"road.arterial","stylers":[{"saturation":-100},{"lightness":30},{"visibility":"on"}]},{"featureType":"road.local","stylers":[{"saturation":-100},{"lightness":40},{"visibility":"on"}]},{"featureType":"transit","stylers":[{"saturation":-100},{"visibility":"simplified"}]},{"featureType":"administrative.province","stylers":[{"visibility":"off"}]},{"featureType":"water","elementType":"labels","stylers":[{"visibility":"on"},{"lightness":-25},{"saturation":-100}]},{"featureType":"water","elementType":"geometry","stylers":[{"hue":"#ffff00"},{"lightness":-25},{"saturation":-97}]}]
   };
-
-  // Get the HTML DOM element that will contain your map 
-  // We are using a div with id="map" seen below in the <body>
-  var mapElement = document.getElementById('map');
 
   // Create the Google Map using our element and options defined above
   var map = new google.maps.Map(mapElement, mapOptions);
@@ -84,6 +81,47 @@ function init() {
   map.addListener('zoom_changed', function() {
     console.log(["map zoom:", map.getZoom()].join(' '));
   });
+}
+
+function lat2merc(lat) {
+    return 180.0 / Math.PI * Math.log(Math.tan(Math.PI/4 + lat * Math.PI/180.0/2.0));
+}
+
+function init() {
+  // Get the HTML DOM element that will contain your map
+  // We are using a div with id="map" seen below in the <body>
+  var mapElement = document.getElementById('map');
+
+  var TILESIZE = 256;
+
+  // number of tiles visible on screen in x/y directions
+  var sx = mapElement.clientWidth / TILESIZE;
+  var sy = mapElement.clientHeight / TILESIZE;
+
+  getJSON("bounds.json", function(b) {
+    var l = function(x) {/*console.log(x)*/}
+    l(b);
+    var center = new google.maps.LatLng(b['lat'], b['long']);
+    var dx = b['dlong'];
+    var dy = lat2merc(b['dlat']);
+    l([
+      "px=", b['dlong'], " py=", b['dlat'],
+      " dx=", dx, " dy=", dy,
+      " sx=", sx, " sy=", sy].join(''));
+    var zoom = 3;
+    for (; zoom < 18; zoom++) {
+      // arc of one tile at next zoom level
+      var tile = 360.0 / Math.pow(2, zoom+1);
+      l(["zoom=", zoom+1,
+        " tile=", tile,
+        " sx*tile=", sx*tile, " sy*tile=", sy*tile].join(''));
+      if (dx > sx*tile || dy > sy*tile) {
+        break;
+      }
+    }
+    l(["initial zoom=", zoom].join(''));
+    initMap(mapElement, center, zoom);
+  })
 }
 
 function getJSON(url, success) {

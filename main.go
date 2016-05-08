@@ -58,6 +58,10 @@ func main() {
 	}
 	defer ic.Close()
 
+	if len(ic.Images()) == 0 {
+		log.Fatal("no geotagged images")
+	}
+
 	tm := NewTileMap(ic)
 
 	type img struct {
@@ -83,6 +87,24 @@ func main() {
 	}
 	http.Handle("/", http.FileServer(&templateDir{p, templateData}))
 
+	http.HandleFunc("/bounds.json", func(w http.ResponseWriter, r *http.Request) {
+		type bounds struct {
+			Lat   float64 `json:"lat"`
+			Long  float64 `json:"long"`
+			Dlat  float64 `json:"dlat"`
+			Dlong float64 `json:"dlong"`
+		}
+		data, err := json.Marshal(bounds{
+			Lat:   tm.Lat,
+			Long:  tm.Long,
+			Dlat:  tm.Dlat,
+			Dlong: tm.Dlong,
+		})
+		if err != nil {
+			log.Println(err)
+		}
+		http.ServeContent(w, r, "bounds.json", ist, bytes.NewReader(data))
+	})
 	http.HandleFunc("/photos.json", func(w http.ResponseWriter, r *http.Request) {
 		buf := new(bytes.Buffer)
 		err := json.NewEncoder(buf).Encode(vim)

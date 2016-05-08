@@ -24,6 +24,9 @@ import (
 const TileSize = 256
 
 type TileMap struct {
+	Lat, Long   float64 // center of boundary of all photos
+	Dlat, Dlong float64 // size of boundary in lat/long direction
+
 	ic     *imagecache.ImageCache
 	images []imagecache.ImageInfo
 
@@ -41,11 +44,10 @@ const photoMinSep = 5e-5 // ~5 meters on equator
 
 func NewTileMap(ic *imagecache.ImageCache) *TileMap {
 	images := ic.Images()
-	pts := make([]point, len(images))
-	for i, im := range images {
-		pts[i] = point{im.Long, lat2merc(im.Lat)}
+	if len(images) == 0 {
+		log.Fatal("empty image cache")
 	}
-	return &TileMap{
+	tm := &TileMap{
 		ic:        ic,
 		qt:        quadtree.New(iiarr(images), quadtree.MinDist(photoMinSep)),
 		tree:      clusterer.NewTree(iiarr(images), photoMinSep),
@@ -54,6 +56,8 @@ func NewTileMap(ic *imagecache.ImageCache) *TileMap {
 		starttime: time.Now(),
 		spot:      blurrySpot(color.NRGBA{255, 0, 0, 64}, 16),
 	}
+	tm.findStartLocation()
+	return tm
 }
 
 func (tm *TileMap) GetTile(x, y, zoom int) []byte {
@@ -96,6 +100,41 @@ func (tm *TileMap) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	x = x & xmask
 	rawimg := tm.GetTile(x, y, zoom)
 	http.ServeContent(w, req, "tile.png", tm.starttime, bytes.NewReader(rawimg))
+}
+
+func (tm *TileMap) findStartLocation() {
+	w0 := tm.findStartLocationOfs(0, false)
+	w180 := tm.findStartLocationOfs(180, false) // when photos are near date line
+	if w0 <= w180 {
+		tm.findStartLocationOfs(0, true)
+	} else {
+		tm.findStartLocationOfs(180, true)
+	}
+}
+
+func (tm *TileMap) findStartLocationOfs(lofs float64, set bool) (width float64) {
+	var x0, y0, x1, y1 float64
+	for i, ii := range tm.ic.Images() {
+		x, y := ii.Long+lofs, ii.Lat
+		if i == 0 {
+			x0, x1 = x, x
+			y0, y1 = y, y
+		} else {
+			x0 = math.Min(x, x0)
+			y0 = math.Min(y, y0)
+			x1 = math.Max(x, x1)
+			y1 = math.Max(y, y1)
+		}
+	}
+	dx, dy := x1-x0, y1-y0
+	if set {
+		cx, cy := (x0+x1)/2, (y0+y1)/2
+		tm.Lat = cy
+		tm.Long = cx - lofs
+		tm.Dlat = dy
+		tm.Dlong = dx
+	}
+	return dx
 }
 
 func (tm *TileMap) generate(x, y, zoom int) []byte {
