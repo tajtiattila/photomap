@@ -61,7 +61,7 @@ function init() {
     }
     var heatmap = new google.maps.visualization.HeatmapLayer({
       data: pts,
-      map: map,
+      //map: map,
       gradient: [
         'rgba(255, 128, 0, 0)',
         'rgba(255, 128, 0, 1)',

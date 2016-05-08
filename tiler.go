@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"image/color"
 	"image/draw"
 	_ "image/jpeg"
 	"image/png"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/tajtiattila/photomap/imagecache"
+	"github.com/tajtiattila/photomap/quadtree"
 )
 
 const TileSize = 256
@@ -24,12 +26,14 @@ type TileMap struct {
 	ic     *imagecache.ImageCache
 	images []imagecache.ImageInfo
 
-	tree *node
+	qt   *quadtree.Quadtree // for photo spots
+	tree *node              // for photo piles
 
-	mtx sync.Mutex // protect gentiles
+	mtx sync.Mutex // protect gen
 	gen map[string]*genTile
 
 	starttime time.Time
+	spot      *image.RGBA // photo spot image
 }
 
 const photoMinSep = 5e-5 // ~5 meters on equator
@@ -44,10 +48,12 @@ func NewTileMap(ic *imagecache.ImageCache) *TileMap {
 	root := makeTree(pts, mindist)
 	return &TileMap{
 		ic:        ic,
+		qt:        quadtree.New(imageInfoQS(images), quadtree.MinDist(photoMinSep)),
 		tree:      root,
 		images:    images,
 		gen:       make(map[string]*genTile),
 		starttime: time.Now(),
+		spot:      blurrySpot(color.NRGBA{255, 0, 0, 64}, 16),
 	}
 }
 
@@ -113,6 +119,24 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 
 	mindist := photoMinSep * math.Pow(2, float64(21-zoom))
 	im := image.NewRGBA(image.Rect(0, 0, TileSize, TileSize))
+
+	// draw spots
+	tm.qt.NearFunc(lami, lomi, lama, loma, func(i int) bool {
+		ii := tm.images[i]
+		x, y := t.Tile(ii.Lat, ii.Long)
+		px := int((x - xo) * TileSize)
+		py := int((y - yo) * TileSize)
+
+		dx := tm.spot.Bounds().Dx()
+		dy := tm.spot.Bounds().Dy()
+		x0 := px - dx/2
+		y0 := py - dy/2
+		draw.Draw(im, image.Rect(x0, y0, x0+dx, y0+dy), tm.spot, tm.spot.Bounds().Min, draw.Over)
+		return true
+	})
+	setAlpha(im, 127)
+
+	// draw photo piles
 	drawPhoto := func(px, py float64, i int) {
 		ii := tm.images[i]
 		thumb, err := tm.ic.PhotoIcon(ii.Id)
@@ -199,6 +223,38 @@ func (gt *genTile) init(tm *TileMap) {
 	gt.once.Do(func() {
 		gt.image = tm.generate(gt.x, gt.y, gt.zoom)
 	})
+}
+
+// change global image alpha
+func setAlpha(im *image.RGBA, alpha uint8) {
+	dx, dy := im.Bounds().Dx(), im.Bounds().Dy()
+	p0 := im.PixOffset(im.Bounds().Min.X, im.Bounds().Min.Y)
+	a := uint32(alpha)
+	for y := 0; y < dy; y++ {
+		ps, pe := p0, p0+4*dx
+		for i := ps; i < pe; i++ {
+			p := &im.Pix[i]
+			*p = uint8((uint32(*p) * a) >> 8)
+		}
+		p0 += im.Stride
+	}
+}
+
+func blurrySpot(clr color.NRGBA, siz int) *image.RGBA {
+	im := image.NewRGBA(image.Rect(0, 0, siz, siz))
+	c := float64(siz) / 2
+	for xi := 0; xi < siz; xi++ {
+		for yi := 0; yi < siz; yi++ {
+			x, y := float64(xi), float64(yi)
+			dx, dy := x-c, y-c
+			r := math.Sqrt(dx*dx + dy*dy)
+			intens := math.Max(0, 1-(r/c))
+			cp := clr
+			cp.A = uint8(float64(clr.A) * intens)
+			im.Set(xi, yi, cp)
+		}
+	}
+	return im
 }
 
 // x, y in -180..180
