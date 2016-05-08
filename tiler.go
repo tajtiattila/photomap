@@ -9,24 +9,22 @@ import (
 	"image/png"
 	"log"
 	"math"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/tajtiattila/photomap/imagecache"
-	"github.com/tajtiattila/photomap/quadtree"
 )
-
-const tmQtMinDist = 1e-6 // 6 digits of latitude is 11 cm on the equator
 
 const TileSize = 256
 
 type TileMap struct {
-	ic *imagecache.ImageCache
-	qt *quadtree.Quadtree
-
+	ic     *imagecache.ImageCache
 	images []imagecache.ImageInfo
+
+	tree *node
 
 	mtx sync.Mutex // protect gentiles
 	gen map[string]*genTile
@@ -34,11 +32,19 @@ type TileMap struct {
 	starttime time.Time
 }
 
+const photoMinSep = 5e-5 // ~5 meters on equator
+
 func NewTileMap(ic *imagecache.ImageCache) *TileMap {
 	images := ic.Images()
+	pts := make([]point, len(images))
+	for i, im := range images {
+		pts[i] = point{im.Long, lat2merc(im.Lat)}
+	}
+	const mindist = photoMinSep
+	root := makeTree(pts, mindist)
 	return &TileMap{
 		ic:        ic,
-		qt:        quadtree.New(imageInfoQS(images), quadtree.MinDist(tmQtMinDist)),
+		tree:      root,
 		images:    images,
 		gen:       make(map[string]*genTile),
 		starttime: time.Now(),
@@ -86,10 +92,10 @@ func (tm *TileMap) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (tm *TileMap) generate(x, y, zoom int) []byte {
-	const radius = 20
+	const thumbSize = 20
 
 	// safety gap for elements hanging over tile boundaries
-	const gap = (radius * 1.5) / TileSize
+	const gap = (thumbSize * 1.5) / TileSize
 
 	xo, yo := float64(x), float64(y)
 
@@ -105,25 +111,47 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 		panic("invalid")
 	}
 
+	mindist := photoMinSep * math.Pow(2, float64(21-zoom))
 	im := image.NewRGBA(image.Rect(0, 0, TileSize, TileSize))
-	tm.qt.NearFunc(lami, lomi, lama, loma, func(i int) bool {
+	drawPhoto := func(px, py float64, i int) {
 		ii := tm.images[i]
-		x, y := t.Tile(ii.Lat, ii.Long)
-		px := int((x - xo) * TileSize)
-		py := int((y - yo) * TileSize)
-
 		thumb, err := tm.ic.PhotoIcon(ii.Id)
 		if err != nil {
 			log.Printf("can't get photo icon for %s: %s", ii.Id, err)
-			return true
+			return
 		}
 
 		dx := thumb.Bounds().Dx()
 		dy := thumb.Bounds().Dy()
-		x0 := px - dx/2
-		y0 := py - dy/2
+		x0 := int(px) - dx/2
+		y0 := int(py) - dy/2
 		draw.Draw(im, image.Rect(x0, y0, x0+dx, y0+dy), thumb, thumb.Bounds().Min, draw.Over)
-		return true
+	}
+	query(tm.tree, lomi, lat2merc(lami), loma, lat2merc(lama), mindist, func(pt point, images []int) {
+		x, y := t.Tile(merc2lat(pt.y), pt.x)
+		px := (x - xo) * TileSize
+		py := (y - yo) * TileSize
+
+		if len(images) > 1 {
+			const (
+				pileMax       = 10
+				pileRadius    = thumbSize
+				pilePhotoArea = pileRadius * pileRadius * math.Pi / pileMax
+			)
+			if len(images) > pileMax {
+				images = images[:pileMax]
+			}
+			area := float64(len(images)) * pilePhotoArea
+			rmax := math.Sqrt(float64(area) / math.Pi)
+			rgen := newRgen(pt.x, pt.y)
+			for _, i := range images[1:] {
+				sin, cos := math.Sincos(2 * math.Pi * rgen.Float64())
+				r := math.Sqrt(rgen.Float64()) * rmax
+				dx, dy := r*cos, r*sin
+				drawPhoto(px+dx, py+dy, i)
+			}
+		}
+		drawPhoto(px, py, images[0])
 	})
 	buf := new(bytes.Buffer)
 	err := png.Encode(buf, im)
@@ -171,4 +199,12 @@ func (gt *genTile) init(tm *TileMap) {
 	gt.once.Do(func() {
 		gt.image = tm.generate(gt.x, gt.y, gt.zoom)
 	})
+}
+
+// x, y in -180..180
+func newRgen(x, y float64) *rand.Rand {
+	xf, yf := math.Floor(x), math.Floor(y)
+	const m = 65536
+	xv, yv := int(m*(x-xf)), int(m*(y-yf))
+	return rand.New(rand.NewSource(int64(yv*m + xv)))
 }
