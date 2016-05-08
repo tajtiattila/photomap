@@ -21,7 +21,7 @@ type ptqs []pent
 func (s ptqs) Len() int                { return len(s) }
 func (s ptqs) At(i int) (x, y float64) { return s[i].x, s[i].y }
 
-func groupNearbyPoints(pts []point, dist float64) [][]int {
+func groupNearbyPoints(pts []point, dist float64) []group {
 	v := make([]pent, len(pts))
 	for i := range pts {
 		v[i] = pent{point: pts[i], group: -1}
@@ -70,15 +70,15 @@ func groupNearbyPoints(pts []point, dist float64) [][]int {
 			return true
 		})
 	}
-	res := make([][]int, 0, len(grps))
+	var res []group
+	// create groups
 	for _, g := range grps {
-		if len(g) != 0 {
-			res = append(res, g)
-		}
+		res = append(res, subdivideGroup(pts, g, dist)...)
 	}
-	for i, ei := range v {
-		if ei.group == -1 {
-			res = append(res, []int{i})
+	// add ungrouped points
+	for i, pt := range pts {
+		if v[i].group == -1 {
+			res = append(res, group{pt, []int{i}})
 		}
 	}
 	return res
@@ -87,14 +87,6 @@ func groupNearbyPoints(pts []point, dist float64) [][]int {
 type group struct {
 	center point
 	elems  []int
-}
-
-func subdivideGroups(pts []point, grps [][]int, dist float64) []group {
-	var res []group
-	for _, g := range grps {
-		res = append(res, subdivideGroup(pts, g, dist)...)
-	}
-	return res
 }
 
 func subdivideGroup(pts []point, g []int, dist float64) []group {
@@ -251,8 +243,7 @@ func dump(n *node, indent string) {
 func makeTree(pts []point, mindist float64) *node {
 	dist := mindist
 	var nodes []node
-	grps := groupNearbyPoints(pts, dist)
-	for _, g := range subdivideGroups(pts, grps, dist) {
+	for _, g := range groupNearbyPoints(pts, dist) {
 		nodes = append(nodes, node{
 			center:  g.center,
 			weight:  len(g.elems),
@@ -275,7 +266,8 @@ func makeTree(pts []point, mindist float64) *node {
 		}
 		belownodes := nodes
 		nodes = make([]node, 0, len(grps))
-		for _, g := range grps {
+		for _, grp := range grps {
+			g := grp.elems
 			if len(g) == 1 {
 				node := belownodes[g[0]]
 				node.mindist = dist
