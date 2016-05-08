@@ -68,6 +68,9 @@ func (is *FileSystemImageSource) Info(id string) (ii source.ImageInfo, err error
 		return source.ImageInfo{}, err
 	}
 	ii.Lat, ii.Long, err = x.LatLong()
+	if err != nil {
+		return source.ImageInfo{}, err
+	}
 	return ii, nil
 }
 
