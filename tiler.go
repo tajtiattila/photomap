@@ -93,6 +93,8 @@ func (tm *TileMap) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "zoom invalid: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	xmask := (1 << uint(zoom)) - 1
+	x = x & xmask
 	rawimg := tm.GetTile(x, y, zoom)
 	http.ServeContent(w, req, "tile.png", tm.starttime, bytes.NewReader(rawimg))
 }
