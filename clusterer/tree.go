@@ -3,22 +3,39 @@ package clusterer
 import (
 	"fmt"
 	"math"
+	"sort"
 )
 
 type Tree struct {
-	root node
+	root xnode
+
+	elem []int
 }
 
 func NewTree(intf Interface, mindist float64) *Tree {
-	return &Tree{makeTree(intf, mindist)}
+	r := makeTree(intf, mindist)
+	root, elem := finalizeTree(r, intf.Len())
+	return &Tree{root, elem}
 }
 
 func (t *Tree) Query(x0, y0, x1, y1, mindist float64, f func(p Point, elem []int)) {
 	q := nodeQuery{bounds: Rectangle{x0, y0, x1, y1},
 		mindist: mindist,
+		elem:    t.elem,
 		cb:      f,
 	}
 	q.visit(&t.root)
+}
+
+type xnode struct {
+	center Point
+	bounds Rectangle
+
+	mindist float64 // children of this node are at least this far apart
+
+	child []xnode
+
+	s, e int // indices of current range into Tree.elem
 }
 
 type node struct {
@@ -113,6 +130,67 @@ func makeTree(intf Interface, mindist float64) node {
 	return nodes[0]
 }
 
+func finalizeTree(root node, nelem int) (xnode, []int) {
+	f := finalizer{
+		elem: make([]int, nelem),
+		idx:  make([]int, nelem),
+	}
+	for i := range f.elem {
+		f.elem[i] = i
+	}
+	return f.finalizeTree(root, 0, nelem), f.elem
+}
+
+type finalizer struct {
+	elem []int
+
+	idx []int
+}
+
+func (f *finalizer) finalizeTree(n node, s, e int) xnode {
+	xn := xnode{
+		center:  n.center,
+		bounds:  n.bounds,
+		mindist: n.mindist,
+		s:       s,
+		e:       e,
+	}
+	if len(n.children) == 0 {
+		return xn
+	}
+	for ic, c := range n.children {
+		for _, e := range c.elem {
+			f.idx[e] = ic
+		}
+	}
+	sort.Sort(&sortByChild{f.idx, f.elem[s:e]})
+	si, sic := 0, 0
+	for i, e := range f.elem[s:e] {
+		ic := f.idx[e]
+		for ic != sic {
+			// next node
+			xc := f.finalizeTree(n.children[sic], s+si, s+i)
+			xn.child = append(xn.child, xc)
+			si, sic = i, ic
+		}
+	}
+	// last node
+	xc := f.finalizeTree(n.children[sic], s+si, e)
+	xn.child = append(xn.child, xc)
+	return xn
+}
+
+type sortByChild struct {
+	idxToChild []int
+	elem       []int
+}
+
+func (s *sortByChild) Len() int           { return len(s.elem) }
+func (s *sortByChild) Swap(i, j int)      { s.elem[i], s.elem[j] = s.elem[j], s.elem[i] }
+func (s *sortByChild) Less(i, j int) bool { return s.child(i) < s.child(j) }
+
+func (s *sortByChild) child(i int) int { return s.idxToChild[s.elem[i]] }
+
 func dump(n *node, indent string) {
 	fmt.Printf("%snode(%v,%v,%v,%v) @%v,%v: %v {\n", indent,
 		n.bounds.X0, n.bounds.Y0, n.bounds.X1, n.bounds.Y1,
@@ -159,28 +237,29 @@ type nodeQuery struct {
 	bounds  Rectangle
 	mindist float64
 
-	n int
+	elem []int
+	n    int
 
 	cb func(pt Point, elem []int)
 }
 
-func (q *nodeQuery) visit(n *node) {
+func (q *nodeQuery) visit(n *xnode) {
 	if !q.bounds.Overlaps(n.bounds) {
 		return
 	}
 	showChildren := true
-	for _, c := range n.children {
+	for _, c := range n.child {
 		if c.mindist < q.mindist {
 			showChildren = false
 			break
 		}
 	}
-	if !showChildren || len(n.children) == 0 {
+	if !showChildren || len(n.child) == 0 {
 		q.n++
-		q.cb(n.center, n.elem)
+		q.cb(n.center, q.elem[n.s:n.e])
 		return
 	}
-	for i := range n.children {
-		q.visit(&n.children[i])
+	for i := range n.child {
+		q.visit(&n.child[i])
 	}
 }
