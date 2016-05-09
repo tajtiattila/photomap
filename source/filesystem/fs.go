@@ -1,8 +1,6 @@
 package fs
 
 import (
-	"bytes"
-	"image"
 	"io"
 	"log"
 	"os"
@@ -10,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rwcarlsen/goexif/exif"
 	"github.com/tajtiattila/photomap/source"
 )
 
@@ -39,8 +36,8 @@ func NewFileSystemImageSource(paths ...string) (*FileSystemImageSource, error) {
 	return is, nil
 }
 
-func (is *FileSystemImageSource) ModTimes() (map[string]time.Time, error) {
-	return is.modTimes, nil
+func (is *FileSystemImageSource) ModTimes() map[string]time.Time {
+	return is.modTimes
 }
 
 func (is *FileSystemImageSource) Info(id string) (ii source.ImageInfo, err error) {
@@ -53,25 +50,8 @@ func (is *FileSystemImageSource) Info(id string) (ii source.ImageInfo, err error
 	if err != nil {
 		return source.ImageInfo{}, err
 	}
-	ii.ModTime = fi.ModTime()
 
-	buf := new(bytes.Buffer)
-	tr := io.TeeReader(f, buf)
-	cfg, _, err := image.DecodeConfig(tr)
-	if err != nil {
-		return source.ImageInfo{}, err
-	}
-	ii.Width, ii.Height = cfg.Width, cfg.Height
-
-	x, err := exif.Decode(io.MultiReader(buf, f))
-	if err != nil {
-		return source.ImageInfo{}, err
-	}
-	ii.Lat, ii.Long, err = x.LatLong()
-	if err != nil {
-		return source.ImageInfo{}, err
-	}
-	return ii, nil
+	return source.InfoFromReader(fi.ModTime(), f)
 }
 
 func (is *FileSystemImageSource) Open(id string) (io.ReadCloser, error) {

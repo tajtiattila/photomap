@@ -110,7 +110,6 @@ func (ic *ImageCache) genPhotoIcon(pg *genPhotoIcon, key string) (image.Image, e
 
 	log.Println("thumbing", ic.keysrcid[key])
 
-	// todo: sync.Once
 	rc, err := ic.src.Open(ic.keysrcid[key])
 	if err != nil {
 		return nil, err
@@ -137,12 +136,7 @@ func (ic *ImageCache) genPhotoIcon(pg *genPhotoIcon, key string) (image.Image, e
 }
 
 func (ic *ImageCache) init() error {
-	mmt, err := ic.src.ModTimes()
-	if err != nil {
-		return err
-	}
-
-	for srcid, mt := range mmt {
+	for srcid, mt := range ic.src.ModTimes() {
 		key, err := ic.getKey(srcid)
 		if err != nil {
 			return err

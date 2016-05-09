@@ -19,10 +19,13 @@ type ImageInfo struct {
 }
 
 type ImageSource interface {
-	// ModTimes returns all images and their modtimes.
-	ModTimes() (map[string]time.Time, error)
+	// ModTimes returns all images that are candidates for inclusion
+	// on the map, along with their modtimes.
+	ModTimes() map[string]time.Time
 
 	// Info returns the image info for the specified id.
+	// An error is returned if the id is not known to this ImageSource
+	// or the id does not refer to a geotagged image.
 	Info(id string) (ImageInfo, error)
 
 	// Open returns a io.ReadCloser for the image with id.

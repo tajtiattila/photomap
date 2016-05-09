@@ -26,12 +26,19 @@ func init() {
 type CamliImageSource struct {
 	c *client.Client
 
-	inf map[string]camliInfo
+	m map[string]time.Time
+
+	cam map[string]camliInfo
 }
 
 type camliInfo struct {
-	source.ImageInfo
+	mt      time.Time
+	ploc    *latlng // location from permanode attrs, if any
 	content blob.Ref
+}
+
+type latlng struct {
+	lat, lng float64
 }
 
 const camliprefix = "camli:"
@@ -42,10 +49,62 @@ func NewCamliImageSource(cn string) (*CamliImageSource, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &CamliImageSource{c, make(map[string]camliInfo)}, nil
+	is := &CamliImageSource{c: c}
+	return is, is.init()
 }
 
-func (is *CamliImageSource) ModTimes() (map[string]time.Time, error) {
+func (is *CamliImageSource) Close() error {
+	return is.c.Close()
+}
+
+func (is *CamliImageSource) ModTimes() map[string]time.Time {
+	return is.m
+}
+
+func (is *CamliImageSource) Info(id string) (ii source.ImageInfo, err error) {
+	sref := strings.TrimPrefix(id, camliprefix)
+	rc, err := is.open(sref)
+	if err != nil {
+		return source.ImageInfo{}, nil
+	}
+	defer rc.Close()
+
+	ci := is.cam[sref]
+
+	ii, err = source.InfoFromReader(ci.mt, rc)
+
+	ok := err == nil || (source.IsNoLoc(err) && ci.ploc != nil)
+	if !ok {
+		return source.ImageInfo{}, nil
+	}
+
+	if ci.ploc != nil {
+		// set/overwrite lat/long with those in permanode
+		ii.Lat, ii.Long = ci.ploc.lat, ci.ploc.lng
+	}
+	return ii, nil
+}
+
+func (is *CamliImageSource) Open(id string) (io.ReadCloser, error) {
+	return is.open(strings.TrimPrefix(id, camliprefix))
+}
+
+func (is *CamliImageSource) open(id string) (io.ReadCloser, error) {
+	ci, ok := is.cam[strings.TrimPrefix(id, camliprefix)]
+	if !ok {
+		log.Printf("missing %q", id)
+		return nil, os.ErrNotExist
+	}
+	rc, err := schema.NewFileReader(is.c, ci.content)
+	if err != nil {
+		log.Printf("camlistore: fetch failed for %q (%q)", id, ci.content)
+		return nil, os.ErrNotExist
+	}
+	defer rc.Close()
+	return rc, nil
+}
+
+func (is *CamliImageSource) init() error {
 	sq := search.SearchQuery{
 		Expression: "has:location",
 		Describe: &search.DescribeRequest{
@@ -58,11 +117,13 @@ func (is *CamliImageSource) ModTimes() (map[string]time.Time, error) {
 	}
 	sr, err := is.c.Query(&sq)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	r := make(map[string]time.Time)
+	is.m = make(map[string]time.Time)
+	is.cam = make(map[string]camliInfo)
 	for _, srb := range sr.Blobs {
-		db := sr.Describe.Meta[srb.Blob.String()]
+		id := srb.Blob.String()
+		db := sr.Describe.Meta[id]
 		contentRef, ok := db.ContentRef()
 		if !ok || db.Permanode == nil {
 			continue
@@ -70,45 +131,16 @@ func (is *CamliImageSource) ModTimes() (map[string]time.Time, error) {
 		pna := db.Permanode.Attr
 		lat, err1 := strconv.ParseFloat(pna.Get(nodeattr.Latitude), 64)
 		lng, err2 := strconv.ParseFloat(pna.Get(nodeattr.Longitude), 64)
-		if err1 != nil && err2 != nil {
-			continue
+		var ll *latlng
+		if err1 == nil && err2 == nil {
+			ll = &latlng{lat, lng}
 		}
-		id := srb.Blob.String()
-		r[camliprefix+id] = db.Permanode.ModTime
-		is.inf[id] = camliInfo{
-			ImageInfo: source.ImageInfo{
-				ModTime: db.Permanode.ModTime,
-				Lat:     lat,
-				Long:    lng,
-			},
+		is.m[camliprefix+id] = db.Permanode.ModTime
+		is.cam[id] = camliInfo{
+			mt:      db.Permanode.ModTime,
+			ploc:    ll,
 			content: contentRef,
 		}
 	}
-	return r, nil
-}
-
-func (is *CamliImageSource) Info(id string) (ii source.ImageInfo, err error) {
-	ci, ok := is.inf[strings.TrimPrefix(id, camliprefix)]
-	if !ok {
-		return ii, os.ErrNotExist
-	}
-	return ci.ImageInfo, nil
-}
-
-func (is *CamliImageSource) Open(id string) (io.ReadCloser, error) {
-	ci, ok := is.inf[strings.TrimPrefix(id, camliprefix)]
-	if !ok {
-		log.Printf("missing %q", id)
-		return nil, os.ErrNotExist
-	}
-	rc, err := schema.NewFileReader(is.c, ci.content)
-	if err != nil {
-		log.Printf("camlistore: fetch failed for %q (%q)", id, ci.content)
-		return nil, os.ErrNotExist
-	}
-	return rc, nil
-}
-
-func (is *CamliImageSource) Close() error {
-	return is.c.Close()
+	return nil
 }
