@@ -1,8 +1,8 @@
 package camlistore
 
 import (
-	"fmt"
 	"io"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -10,6 +10,7 @@ import (
 
 	"camlistore.org/pkg/blob"
 	"camlistore.org/pkg/client"
+	"camlistore.org/pkg/schema"
 	"camlistore.org/pkg/schema/nodeattr"
 	"camlistore.org/pkg/search"
 
@@ -67,28 +68,27 @@ func (is *CamliImageSource) ModTimes() (map[string]time.Time, error) {
 			continue
 		}
 		pna := db.Permanode.Attr
-		fmt.Printf("%+v\n", db.Permanode)
 		lat, err1 := strconv.ParseFloat(pna.Get(nodeattr.Latitude), 64)
 		lng, err2 := strconv.ParseFloat(pna.Get(nodeattr.Longitude), 64)
 		if err1 != nil && err2 != nil {
 			continue
 		}
-		id := camliprefix + srb.Blob.String()
-		r[id] = db.Permanode.ModTime
+		id := srb.Blob.String()
+		r[camliprefix+id] = db.Permanode.ModTime
 		is.inf[id] = camliInfo{
-			source.ImageInfo{
+			ImageInfo: source.ImageInfo{
 				ModTime: db.Permanode.ModTime,
 				Lat:     lat,
 				Long:    lng,
 			},
-			contentRef,
+			content: contentRef,
 		}
 	}
 	return r, nil
 }
 
 func (is *CamliImageSource) Info(id string) (ii source.ImageInfo, err error) {
-	ci, ok := is.inf[id]
+	ci, ok := is.inf[strings.TrimPrefix(id, camliprefix)]
 	if !ok {
 		return ii, os.ErrNotExist
 	}
@@ -96,15 +96,17 @@ func (is *CamliImageSource) Info(id string) (ii source.ImageInfo, err error) {
 }
 
 func (is *CamliImageSource) Open(id string) (io.ReadCloser, error) {
-	if !strings.HasPrefix(id, camliprefix) {
-		return nil, os.ErrNotExist
-	}
-	ref, ok := blob.Parse(strings.TrimPrefix(id, camliprefix))
+	ci, ok := is.inf[strings.TrimPrefix(id, camliprefix)]
 	if !ok {
+		log.Printf("missing %q", id)
 		return nil, os.ErrNotExist
 	}
-	rc, _, err := is.c.Fetch(ref)
-	return rc, err
+	rc, err := schema.NewFileReader(is.c, ci.content)
+	if err != nil {
+		log.Printf("camlistore: fetch failed for %q (%q)", id, ci.content)
+		return nil, os.ErrNotExist
+	}
+	return rc, nil
 }
 
 func (is *CamliImageSource) Close() error {
