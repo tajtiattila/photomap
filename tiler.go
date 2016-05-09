@@ -11,10 +11,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
-	"net/http"
-	"strconv"
 	"sync"
-	"time"
 
 	"github.com/tajtiattila/photomap/clusterer"
 	"github.com/tajtiattila/photomap/imagecache"
@@ -36,8 +33,7 @@ type TileMap struct {
 	mtx sync.Mutex // protect gen
 	gen map[string]*genTile
 
-	starttime time.Time
-	spot      *image.RGBA // photo spot image
+	spot *image.RGBA // photo spot image
 }
 
 const photoMinSep = 5e-5 // ~5 meters on equator
@@ -48,13 +44,12 @@ func NewTileMap(ic *imagecache.ImageCache) *TileMap {
 		log.Fatal("empty image cache")
 	}
 	tm := &TileMap{
-		ic:        ic,
-		qt:        quadtree.New(iiarr(images), quadtree.MinDist(photoMinSep)),
-		tree:      clusterer.NewTree(iiarr(images), photoMinSep),
-		images:    images,
-		gen:       make(map[string]*genTile),
-		starttime: time.Now(),
-		spot:      blurrySpot(color.NRGBA{255, 0, 0, 64}, 16),
+		ic:     ic,
+		qt:     quadtree.New(iiarr(images), quadtree.MinDist(photoMinSep)),
+		tree:   clusterer.NewTree(iiarr(images), photoMinSep),
+		images: images,
+		gen:    make(map[string]*genTile),
+		spot:   blurrySpot(color.NRGBA{255, 0, 0, 64}, 16),
 	}
 	tm.findStartLocation()
 	return tm
@@ -75,31 +70,46 @@ func (tm *TileMap) GetTile(x, y, zoom int) []byte {
 	return gt.image
 }
 
-func (tm *TileMap) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	q := req.URL.Query()
-	if q.Get("x") == "" || q.Get("y") == "" || q.Get("zoom") == "" {
-		http.Error(w, "parameter(s) missing: need x, y, zoom", http.StatusBadRequest)
-		return
+// PhotoPlaces returns clickable places with galleries within the requested boundary,
+// along with
+func (tm *TileMap) PhotoPlaces(la0, lo0, la1, lo1 float64, zoom int) ([]LatLong, float64) {
+	zd := zoomdist(zoom)
+	var r []LatLong
+	tm.tree.Query(lo0, lat2merc(la0), lo1, lat2merc(la1), zd, func(pt clusterer.Point, images []int) {
+		r = append(r, LatLong{merc2lat(pt.Y), pt.X})
+	})
+	return r, zd / 2
+}
+
+type LatLong struct {
+	Lat  float64 `json:"lat"`
+	Long float64 `json:"long"`
+}
+
+// Gallery returns the ids to show in a gallery at the given location.
+func (tm *TileMap) Gallery(lat, long float64, zoom int) []string {
+	zd := zoomdist(zoom)
+	m := lat2merc(lat)
+	r := zd / 2
+	var im []int
+	var bestdist float64
+	tm.tree.Query(long-r, m-r, long+r, m+r, zd, func(pt clusterer.Point, images []int) {
+		dx, dy := long-pt.X, m-pt.Y
+		d := dx*dx + dy*dy
+		if im == nil || d < bestdist {
+			im = images
+			bestdist = d
+		}
+	})
+	if im == nil {
+		return nil
 	}
-	x, err := strconv.Atoi(q.Get("x"))
-	if err != nil {
-		http.Error(w, "x invalid: "+err.Error(), http.StatusBadRequest)
-		return
+	refs := make([]string, len(im))
+	for i, x := range im {
+		ii := tm.images[x]
+		refs[i] = ii.Id
 	}
-	y, err := strconv.Atoi(q.Get("y"))
-	if err != nil {
-		http.Error(w, "y invalid: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	zoom, err := strconv.Atoi(q.Get("zoom"))
-	if err != nil {
-		http.Error(w, "zoom invalid: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	xmask := (1 << uint(zoom)) - 1
-	x = x & xmask
-	rawimg := tm.GetTile(x, y, zoom)
-	http.ServeContent(w, req, "tile.png", tm.starttime, bytes.NewReader(rawimg))
+	return refs
 }
 
 func (tm *TileMap) findStartLocation() {
@@ -157,7 +167,6 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 		panic("invalid")
 	}
 
-	mindist := photoMinSep * math.Pow(2, float64(21-zoom))
 	im := image.NewRGBA(image.Rect(0, 0, TileSize, TileSize))
 
 	// draw spots
@@ -191,7 +200,7 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 		y0 := int(py) - dy/2
 		draw.Draw(im, image.Rect(x0, y0, x0+dx, y0+dy), thumb, thumb.Bounds().Min, draw.Over)
 	}
-	tm.tree.Query(lomi, lat2merc(lami), loma, lat2merc(lama), mindist, func(pt clusterer.Point, images []int) {
+	tm.tree.Query(lomi, lat2merc(lami), loma, lat2merc(lama), zoomdist(zoom), func(pt clusterer.Point, images []int) {
 		x, y := t.Tile(merc2lat(pt.Y), pt.X)
 		px := (x - xo) * TileSize
 		py := (y - yo) * TileSize
@@ -223,6 +232,10 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 		panic(err) // impossible
 	}
 	return buf.Bytes()
+}
+
+func zoomdist(zoom int) float64 {
+	return photoMinSep * math.Pow(2, float64(21-zoom))
 }
 
 type iiarr []imagecache.ImageInfo

@@ -114,7 +114,9 @@ func main() {
 		http.ServeContent(w, r, "photos.json", ist, bytes.NewReader(buf.Bytes()))
 	})
 
-	http.Handle("/tiles/", tm)
+	handleWithPrefix("/tiles/", NewTileHandler(tm))
+	http.Handle("/viewport.json", NewViewportPlaceHandler(tm))
+	http.Handle("/gallery.json", NewGalleryHandler(tm))
 
 	log.Println("Listening on", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
@@ -161,4 +163,12 @@ func (f *templateFile) Read(p []byte) (n int, err error) {
 
 func (f *templateFile) Seek(offset int64, whence int) (int64, error) {
 	return f.r.Seek(offset, whence)
+}
+
+func handleWithPrefix(pfx string, h http.Handler) {
+	n := len(pfx) - 1
+	if n < 0 || pfx[n] != '/' {
+		panic("prefix must end in '/'")
+	}
+	http.Handle(pfx, http.StripPrefix(pfx[:n], h))
 }

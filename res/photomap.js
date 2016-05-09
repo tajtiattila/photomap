@@ -1,5 +1,10 @@
 // When the window has finished loading create our google map below
 google.maps.event.addDomListener(window, 'load', init);
+
+function lat2merc(lat) {
+    return 180.0 / Math.PI * Math.log(Math.tan(Math.PI/4 + lat * Math.PI/180.0/2.0));
+}
+
 function initMap(mapElement, startAt, startZoom) {
   // Basic options for a simple Google Map
   // For more options see: https://developers.google.com/maps/documentation/javascript/reference#MapOptions
@@ -18,10 +23,93 @@ function initMap(mapElement, startAt, startZoom) {
   // Create the Google Map using our element and options defined above
   var map = new google.maps.Map(mapElement, mapOptions);
 
+  var bounds, lastBounds;
+  var markers = [];
+  var infoWindow;
+  function clearMarkers(latLng) {
+    for (var i = 0; i < markers.length; i++) {
+      markers[i].setMap(null);
+    }
+    markers = [];
+  }
+  function hideInfoWindow() {
+    if (infoWindow) {
+      infoWindow.close();
+      infoWindow = undefined;
+    }
+  }
+  function showGallery(lat, lng) {
+    hideInfoWindow();
+    var u = ['gallery.json?la=', lat, '&lo=', lng,
+      '&zoom=', map.getZoom()].join('');
+    getJSON(u, function(gal) {
+      if (!gal || gal.length == 0) return;
+      var n = gal.length;
+      if (n > 10) {
+        gal = gal.splice(0, 10);
+        gal.push("...");
+      }
+      var content = [[n, ' photos:'].join('')].concat(gal);
+      infoWindow = new google.maps.InfoWindow({
+        position: new google.maps.LatLng(lat, lng),
+        content: content.join('<br/>'),
+      });
+      infoWindow.open(map);
+    });
+  }
+  map.addListener("bounds_changed", function() {
+    bounds = map.getBounds();
+    clearMarkers();
+  });
+  map.addListener("idle", function() {
+    if (bounds && !bounds.equals(lastBounds)) {
+      clearMarkers();
+      lastBounds = bounds;
+      var la0 = bounds.getSouthWest().lat();
+      var lo0 = bounds.getSouthWest().lng();
+      var la1 = bounds.getNorthEast().lat();
+      var lo1 = bounds.getNorthEast().lng();
+      var z = map.getZoom();
+      var u = ['viewport.json?la0=', la0, '&lo0=', lo0,
+        '&la1=', la1, '&lo1=', lo1, '&zoom=', z].join('');
+      getJSON(u, function(vp) {
+        if (!vp) return;
+        var r = vp.radius;
+        var c = vp.coords;
+        var nc = c.length;
+        for (var i = 0; i < nc; i+=2) {
+          var lat = c[i];
+          var lng = c[i+1];
+          var marker = new google.maps.Circle({
+            center: new google.maps.LatLng(lat, lng),
+            // todo: calc proper radius from latitude
+            radius: r / 360.0 * 2e7,
+            fillOpacity: 0.0,
+            strokeOpacity: 0.0,
+            map: map
+          });
+          function sg(marker, lat, lng) {
+            marker.addListener('click', function() {
+              showGallery(lat, lng);
+            });
+          }
+          sg(marker, lat, lng);
+          markers.push(marker);
+        }
+      });
+    }
+  });
+  map.addListener("click", function(e) {
+    hideInfoWindow();
+  });
+  map.addListener("zoom_changed", function() {
+    hideInfoWindow();
+  });
+
+  // init overlays
   var photoOverlay = new google.maps.ImageMapType({
     getTileUrl: function(coord, zoom) {
-      return ['/tiles/tile.png?',
-          'zoom=', zoom, '&x=', coord.x, '&y=', coord.y].join('');
+      return ['/tiles/', coord.x, '_', coord.y, '_', zoom].join('');
     },
     tileSize: google.maps.Size(256, 256)
   });
@@ -76,15 +164,6 @@ function initMap(mapElement, startAt, startZoom) {
       ]
     });
   });
-
-  // position/zoom to url
-  map.addListener('zoom_changed', function() {
-    console.log(["map zoom:", map.getZoom()].join(' '));
-  });
-}
-
-function lat2merc(lat) {
-    return 180.0 / Math.PI * Math.log(Math.tan(Math.PI/4 + lat * Math.PI/180.0/2.0));
 }
 
 function init() {

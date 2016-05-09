@@ -17,8 +17,7 @@ Goals
 
 Short term
 
-- Clickable photo icons
-- Add full screen photo view
+- Add gallery
 - Camlistore support
 
 Future
