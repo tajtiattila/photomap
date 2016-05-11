@@ -17,7 +17,8 @@ Goals
 
 Short term
 
-- Add gallery
+- Better thumbnail view
+- Add full size photo preview
 - Camlistore support
 
 Future

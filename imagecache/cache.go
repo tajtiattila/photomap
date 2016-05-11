@@ -231,7 +231,7 @@ func (ic *ImageCache) createPhotoIcon(key string) (image.Image, error) {
 	}
 	defer rc.Close()
 
-	im, _, err = image.Decode(rc)
+	im, err = source.LoadImage(rc)
 	if err != nil {
 		log.Println(err)
 		return nil, err
@@ -267,7 +267,7 @@ func (ic *ImageCache) createThumb(key string) ([]byte, error) {
 	}
 	defer rc.Close()
 
-	im, _, err := image.Decode(rc)
+	im, err := source.LoadImage(rc)
 	if err != nil {
 		log.Printf("source decode %q: %v", key, err)
 		return nil, err
