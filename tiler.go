@@ -11,6 +11,7 @@ import (
 	"log"
 	"math"
 	"math/rand"
+	"sort"
 	"sync"
 
 	"github.com/tajtiattila/photomap/clusterer"
@@ -104,9 +105,13 @@ func (tm *TileMap) Gallery(lat, long float64, zoom int) []string {
 	if im == nil {
 		return nil
 	}
-	refs := make([]string, len(im))
-	for i, x := range im {
-		ii := tm.images[x]
+	iiv := make([]imagecache.ImageInfo, 0, len(im))
+	for _, i := range im {
+		iiv = append(iiv, tm.images[i])
+	}
+	sort.Sort(iiByDate(iiv))
+	refs := make([]string, len(iiv))
+	for i, ii := range iiv {
 		refs[i] = ii.Id
 	}
 	return refs
@@ -186,8 +191,7 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 	setAlpha(im, 127)
 
 	// draw photo piles
-	drawPhoto := func(px, py float64, i int) {
-		ii := tm.images[i]
+	drawPhoto := func(px, py float64, ii imagecache.ImageInfo) {
 		thumb, err := tm.ic.PhotoIcon(ii.Id)
 		if err != nil {
 			log.Printf("can't get photo icon for %s: %s", ii.Id, err)
@@ -205,26 +209,33 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 		px := (x - xo) * TileSize
 		py := (y - yo) * TileSize
 
-		if len(images) > 1 {
+		// have newest images first
+		vii := make([]imagecache.ImageInfo, len(images))
+		for i, x := range images {
+			vii[i] = tm.images[x]
+		}
+		sort.Sort(sort.Reverse(iiByDate(vii)))
+
+		if len(vii) > 1 {
 			const (
 				pileMax       = 10
 				pileRadius    = thumbSize
 				pilePhotoArea = pileRadius * pileRadius * math.Pi / pileMax
 			)
-			if len(images) > pileMax {
-				images = images[:pileMax]
+			if len(vii) > pileMax {
+				vii = vii[:pileMax]
 			}
-			area := float64(len(images)) * pilePhotoArea
+			area := float64(len(vii)) * pilePhotoArea
 			rmax := math.Sqrt(float64(area) / math.Pi)
 			rgen := newRgen(pt.X, pt.Y)
-			for _, i := range images[1:] {
+			for _, ii := range vii[1:] {
 				sin, cos := math.Sincos(2 * math.Pi * rgen.Float64())
 				r := math.Sqrt(rgen.Float64()) * rmax
 				dx, dy := r*cos, r*sin
-				drawPhoto(px+dx, py+dy, i)
+				drawPhoto(px+dx, py+dy, ii)
 			}
 		}
-		drawPhoto(px, py, images[0])
+		drawPhoto(px, py, vii[0])
 	})
 	buf := new(bytes.Buffer)
 	err := png.Encode(buf, im)
@@ -237,6 +248,12 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 func zoomdist(zoom int) float64 {
 	return photoMinSep * math.Pow(2, float64(21-zoom))
 }
+
+type iiByDate []imagecache.ImageInfo
+
+func (s iiByDate) Len() int           { return len(s) }
+func (s iiByDate) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s iiByDate) Less(i, j int) bool { return s[i].CreateTime.Before(s[j].CreateTime) }
 
 type iiarr []imagecache.ImageInfo
 

@@ -1,8 +1,40 @@
 /* Set a size for our map container, the Google Map will take up 100% of this container */
+#sidebar {
+  position:absolute;
+  top:0;left:0;
+  width:25%;
+  height:100%;
+  visibility:hidden;
+  overflow:hidden;
+}
+#thumbs {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow:auto;
+  font-size:0;
+}
+#thumbs>img {
+  padding: 1px;
+}
 #map {
   position:absolute;
-  /*left:25%;
-  width:75%;*/
-  left:0;right:0;
+  left:0%;
+  width:100%;
+  /*left:0;right:0;*/
   top:0;bottom:0;
+}
+
+::-webkit-scrollbar {
+  width:3px;
+  height:3px;
+  border-left:0;
+  background:rgba(0,0,0,0.1);
+}
+::-webkit-scrollbar-track {
+  background:none;
+}
+::-webkit-scrollbar-thumb {
+  background:#888;
+  border-radius:0;
 }

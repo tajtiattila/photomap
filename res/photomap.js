@@ -25,36 +25,38 @@ function initMap(mapElement, startAt, startZoom) {
 
   var bounds, lastBounds;
   var markers = [];
-  var infoWindow;
   function clearMarkers(latLng) {
     for (var i = 0; i < markers.length; i++) {
       markers[i].setMap(null);
     }
     markers = [];
   }
-  function hideInfoWindow() {
-    if (infoWindow) {
-      infoWindow.close();
-      infoWindow = undefined;
-    }
+  function hideGallery() {
+    var mapElem = document.getElementById('map');
+    var sidebar = document.getElementById('sidebar');
+    sidebar.style.visibility = "hidden";
+    mapElem.style.left = "0%";
+    mapElem.style.width = "100%";
   }
   function showGallery(lat, lng) {
-    hideInfoWindow();
     var u = ['gallery.json?la=', lat, '&lo=', lng,
       '&zoom=', map.getZoom()].join('');
     getJSON(u, function(gal) {
-      if (!gal || gal.length == 0) return;
-      var n = gal.length;
-      if (n > 10) {
-        gal = gal.splice(0, 10);
-        gal.push("...");
+      if (!gal || gal.length == 0) {
+        hideGallery();
+        return;
       }
-      var content = [[n, ' photos:'].join('')].concat(gal);
-      infoWindow = new google.maps.InfoWindow({
-        position: new google.maps.LatLng(lat, lng),
-        content: content.join('<br/>'),
-      });
-      infoWindow.open(map);
+      var mapElem = document.getElementById('map');
+      var sidebar = document.getElementById('sidebar');
+      sidebar.style.visibility = "visible";
+      mapElem.style.left = "25%";
+      mapElem.style.width = "75%";
+      var thumbs = [];
+      for (var i = 0; i < gal.length; i++) {
+        thumbs.push(['<img src="thumb/' + gal[i] + '"/>'].join(''));
+      }
+      var thumbElem = document.getElementById('thumbs');
+      thumbElem.innerHTML = thumbs.join('');
     });
   }
   map.addListener("bounds_changed", function() {
@@ -100,10 +102,9 @@ function initMap(mapElement, startAt, startZoom) {
     }
   });
   map.addListener("click", function(e) {
-    hideInfoWindow();
+    hideGallery();
   });
   map.addListener("zoom_changed", function() {
-    hideInfoWindow();
   });
 
   // init overlays

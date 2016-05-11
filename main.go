@@ -118,6 +118,8 @@ func main() {
 	http.Handle("/viewport.json", NewViewportPlaceHandler(tm))
 	http.Handle("/gallery.json", NewGalleryHandler(tm))
 
+	handleWithPrefix("/thumb/", NewThumbnailHandler(ic))
+
 	log.Println("Listening on", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }

@@ -7,7 +7,7 @@ import (
 )
 
 type ImageInfo struct {
-	ModTime time.Time
+	CreateTime time.Time
 
 	// image dimensions
 	Width  int

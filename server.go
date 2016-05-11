@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/tajtiattila/photomap/imagecache"
 )
 
 func NewTileHandler(tm *TileMap) http.Handler {
@@ -88,6 +90,23 @@ func NewGalleryHandler(tm *TileMap) http.Handler {
 			return
 		}
 		serveJson(w, req, res, starttime)
+	})
+}
+
+func NewThumbnailHandler(ic *imagecache.ImageCache) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		key := req.URL.Path
+		if len(key) == 0 || key[0] != '/' {
+			http.Error(w, "invalid thumb path", http.StatusBadRequest)
+			return
+		}
+		r, mt, err := ic.Thumbnail(key[1:])
+		if err != nil {
+			log.Println(err)
+			http.NotFound(w, req)
+			return
+		}
+		http.ServeContent(w, req, "thumb.jpeg", mt, r)
 	})
 }
 

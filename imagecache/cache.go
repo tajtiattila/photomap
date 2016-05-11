@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
-	"fmt"
 	"image"
-	_ "image/jpeg"
+	"image/color"
+	"image/jpeg"
 	"image/png"
+	"io"
 	"log"
 	"path/filepath"
 	"sync"
@@ -22,6 +24,8 @@ import (
 type ImageInfo struct {
 	// key for thumb/icon lookup
 	Id string `json:"id"`
+
+	CreateTime time.Time
 
 	// image dimensions
 	Width  int `json:"w,omitempty"`
@@ -40,8 +44,23 @@ type ImageCache struct {
 	keysrcid map[string]string
 	images   []ImageInfo
 
-	pimtx sync.Mutex // protects pigen
-	pigen map[string]*genPhotoIcon
+	photoIconMtx sync.RWMutex // protects photoIcon
+	photoIcon    map[string]cachedImage
+	photoIconGen *parallelGroup
+
+	thumbGen *parallelGroup
+}
+
+// cachedImage is an image or an error
+// that occurred while generating it
+type cachedImage struct {
+	im  image.Image
+	err error
+}
+
+type cachedData struct {
+	raw []byte
+	err error
 }
 
 func New(src source.ImageSource) (*ImageCache, error) {
@@ -57,8 +76,11 @@ func New(src source.ImageSource) (*ImageCache, error) {
 		src:      src,
 		db:       db,
 		keysrcid: make(map[string]string),
-		pigen:    make(map[string]*genPhotoIcon),
+
+		photoIcon: make(map[string]cachedImage),
 	}
+	ic.photoIconGen = newParallelGroup(4)
+	ic.thumbGen = newParallelGroup(4)
 	return ic, ic.init()
 }
 
@@ -72,67 +94,57 @@ func (ic *ImageCache) Close() error {
 }
 
 func (ic *ImageCache) PhotoIcon(key string) (image.Image, error) {
-	ic.pimtx.Lock()
-	pg, ok := ic.pigen[key]
-	if !ok {
-		pg = new(genPhotoIcon)
-		ic.pigen[key] = pg
+	ic.photoIconMtx.RLock()
+	cim, ok := ic.photoIcon[key]
+	ic.photoIconMtx.RUnlock()
+	if ok {
+		return cim.im, cim.err
 	}
-	ic.pimtx.Unlock()
 
-	pg.once.Do(func() {
-		var err error
-		pg.im, err = ic.genPhotoIcon(pg, key)
-		if err != nil {
-			log.Println(err)
-		}
+	im, err := ic.photoIconGen.Do(key, func() (interface{}, error) {
+		return ic.createPhotoIcon(key)
 	})
-
-	if pg.im == nil {
-		return nil, fmt.Errorf("missing thumb for %s", key)
+	if im != nil {
+		cim.im = im.(image.Image)
 	}
-	return pg.im, nil
+	cim.err = err
+
+	ic.photoIconMtx.Lock()
+	ic.photoIcon[key] = cim
+	ic.photoIconMtx.Unlock()
+
+	return cim.im, cim.err
 }
 
-func (ic *ImageCache) genPhotoIcon(pg *genPhotoIcon, key string) (image.Image, error) {
-	k := []byte(photoIconPfx + key)
-	data, err := ic.db.Get(k, nil)
-	switch err {
-	case nil:
-		// return cached image
-		im, _, err := image.Decode(bytes.NewReader(data))
-		return im, err
-	case leveldb.ErrNotFound:
-		// pass
-	default:
+func (ic *ImageCache) Thumbnail(key string) (io.ReadSeeker, time.Time, error) {
+	data, err := ic.thumbnail(key)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	var mt time.Time
+	if len(data) > 8 {
+		mt = time.Unix(int64(binary.BigEndian.Uint64(data)), 0)
+		data = data[8:]
+	}
+	return bytes.NewReader(data), mt, nil
+}
+
+func (ic *ImageCache) thumbnail(key string) ([]byte, error) {
+	data, err := ic.db.Get([]byte(thumbPfx+key), nil)
+	if err == nil {
+		return data, nil
+	}
+	if err != leveldb.ErrNotFound {
 		return nil, err
 	}
 
-	log.Println("thumbing", ic.keysrcid[key])
-
-	rc, err := ic.src.Open(ic.keysrcid[key])
+	di, err := ic.thumbGen.Do(key, func() (interface{}, error) {
+		return ic.createThumb(key)
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rc.Close()
-
-	// generate thumb
-	t := NewThumber()
-	im, err := t.PhotoIcon(rc)
-	if err != nil {
-		return nil, err
-	}
-
-	buf := new(bytes.Buffer)
-	if err := png.Encode(buf, im); err != nil {
-		log.Println("can't encode thumb for cache:", err)
-		return im, err
-	}
-	if err := ic.db.Put(k, buf.Bytes(), nil); err != nil {
-		log.Println("can't save thumb to cache:", err)
-	}
-
-	return im, err
+	return di.([]byte), nil
 }
 
 func (ic *ImageCache) init() error {
@@ -173,13 +185,12 @@ func (ic *ImageCache) loadFreshCacheEntry(key, srcid string, mt time.Time) (cach
 			// cache up to date
 			return ce, nil
 		}
-		err = ic.db.Delete([]byte(photoIconPfx+key), nil)
-		if err != nil && err != leveldb.ErrNotFound {
-			log.Printf("delete cached photo icon %q/%q: %v", key, srcid, err)
-		}
-		err = ic.db.Delete([]byte(thumbPfx+key), nil)
-		if err != nil && err != leveldb.ErrNotFound {
-			log.Printf("delete cached thumb %q/%q: %v", key, srcid, err)
+		delPfx := []string{photoIconPfx, thumbPfx}
+		for _, dp := range delPfx {
+			err = ic.db.Delete([]byte(dp+key), nil)
+			if err != nil && err != leveldb.ErrNotFound {
+				log.Printf("delete from cache %q/%q: %v", key, srcid, err)
+			}
 		}
 	}
 	ii, err := ic.src.Info(srcid)
@@ -188,11 +199,12 @@ func (ic *ImageCache) loadFreshCacheEntry(key, srcid string, mt time.Time) (cach
 		ce.IsErr = true
 	} else {
 		ce.ImageInfo = ImageInfo{
-			Id:     key,
-			Width:  ii.Width,
-			Height: ii.Height,
-			Lat:    ii.Lat,
-			Long:   ii.Long,
+			Id:         key,
+			CreateTime: ii.CreateTime,
+			Width:      ii.Width,
+			Height:     ii.Height,
+			Lat:        ii.Lat,
+			Long:       ii.Long,
 		}
 	}
 	data, err = json.Marshal(ce)
@@ -200,6 +212,84 @@ func (ic *ImageCache) loadFreshCacheEntry(key, srcid string, mt time.Time) (cach
 		panic("can't marshal cacheEntry")
 	}
 	return ce, ic.db.Put(k, data, nil)
+}
+
+func (ic *ImageCache) createPhotoIcon(key string) (image.Image, error) {
+	im, err := ic.loadImage(photoIconPfx + key)
+	if err == nil {
+		return im, nil
+	}
+	if err != leveldb.ErrNotFound {
+		log.Printf("createPhotoIcon db get %q: %v", key, err)
+		return nil, err
+	}
+
+	rc, err := ic.src.Open(ic.keysrcid[key])
+	if err != nil {
+		log.Printf("createPhotoIcon read %q: %v", key, err)
+		return nil, err
+	}
+	defer rc.Close()
+
+	im, _, err = image.Decode(rc)
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+
+	im = MakeScaler(20, 20).Scale(im)
+
+	// add frame
+	im = Frame(im, 2, color.RGBA{255, 255, 255, 255})
+
+	// add shadow
+	shadow := Shadow{
+		Color: color.RGBA{0, 0, 0, 128},
+		Dx:    0,
+		Dy:    1,
+		Blur:  4,
+	}
+
+	im = shadow.Apply(im)
+
+	ic.storeImage(photoIconPfx+key, im, png.Encode)
+
+	return im, nil
+}
+
+// generate thumb for key, store it in db, and return the new
+// image encoded as jpeg
+func (ic *ImageCache) createThumb(key string) ([]byte, error) {
+	rc, err := ic.src.Open(ic.keysrcid[key])
+	if err != nil {
+		log.Printf("source read %q: %v", key, err)
+		return nil, err
+	}
+	defer rc.Close()
+
+	im, _, err := image.Decode(rc)
+	if err != nil {
+		log.Printf("source decode %q: %v", key, err)
+		return nil, err
+	}
+
+	im = MakeScaler(100, 100).Scale(im)
+
+	mt := make([]byte, 8)
+	binary.BigEndian.PutUint64(mt, uint64(time.Now().Unix()))
+
+	buf := new(bytes.Buffer)
+	buf.Write(mt)
+
+	if err := jpeg.Encode(buf, im, nil); err != nil {
+		log.Printf("thumb encode %q: %v", key, err)
+		return nil, err
+	}
+
+	if err := ic.db.Put([]byte(thumbPfx+key), buf.Bytes(), nil); err != nil {
+		log.Println("can't store image in cache:", err)
+	}
+	return buf.Bytes(), nil
 }
 
 func (ic *ImageCache) getKey(srcid string) (string, error) {
@@ -233,6 +323,28 @@ func (ic *ImageCache) getKey(srcid string) (string, error) {
 	}
 }
 
+func (ic *ImageCache) loadImage(k string) (image.Image, error) {
+	data, err := ic.db.Get([]byte(k), nil)
+	if err != nil {
+		return nil, err
+	}
+	im, _, err := image.Decode(bytes.NewReader(data))
+	return im, err
+}
+
+func (ic *ImageCache) storeImage(k string, m image.Image, enc func(w io.Writer, m image.Image) error) error {
+	buf := new(bytes.Buffer)
+	if err := enc(buf, m); err != nil {
+		log.Println("can't encode image for cache:", err)
+		return err
+	}
+	if err := ic.db.Put([]byte(k), buf.Bytes(), nil); err != nil {
+		log.Println("can't store image in cache:", err)
+		return err
+	}
+	return nil
+}
+
 func incByteArray(p []byte) {
 	for i := len(p) - 1; i >= 0; i-- {
 		p[i]++
@@ -248,9 +360,4 @@ type cacheEntry struct {
 	ModTime time.Time
 	ImageInfo
 	IsErr bool
-}
-
-type genPhotoIcon struct {
-	once sync.Once
-	im   image.Image
 }
