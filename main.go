@@ -52,6 +52,7 @@ func main() {
 		log.Fatal("no image source specified")
 	}
 
+	log.Println("Caching new images")
 	ic, err := imagecache.New(is)
 	if err != nil {
 		log.Fatal(err)
@@ -61,6 +62,7 @@ func main() {
 	if len(ic.Images()) == 0 {
 		log.Fatal("no geotagged images")
 	}
+	log.Printf("Found %d geotagged images\n", len(ic.Images()))
 
 	tm := NewTileMap(ic)
 

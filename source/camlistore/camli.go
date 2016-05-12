@@ -65,7 +65,7 @@ func (is *CamliImageSource) Info(id string) (ii source.ImageInfo, err error) {
 	sref := strings.TrimPrefix(id, camliprefix)
 	rc, err := is.open(sref)
 	if err != nil {
-		return source.ImageInfo{}, nil
+		return source.ImageInfo{}, err
 	}
 	defer rc.Close()
 
@@ -75,7 +75,7 @@ func (is *CamliImageSource) Info(id string) (ii source.ImageInfo, err error) {
 
 	ok := err == nil || (source.IsNoLoc(err) && ci.ploc != nil)
 	if !ok {
-		return source.ImageInfo{}, nil
+		return source.ImageInfo{}, err
 	}
 
 	if ci.ploc != nil {
@@ -100,46 +100,56 @@ func (is *CamliImageSource) open(id string) (io.ReadCloser, error) {
 		log.Printf("camlistore: fetch failed for %q (%q)", id, ci.content)
 		return nil, os.ErrNotExist
 	}
-	defer rc.Close()
 	return rc, nil
 }
 
 func (is *CamliImageSource) init() error {
-	sq := search.SearchQuery{
-		Expression: "has:location",
-		Describe: &search.DescribeRequest{
-			Rules: []*search.DescribeRule{
-				{
-					Attrs: []string{nodeattr.Latitude, nodeattr.Longitude},
+	start := true
+	var cont string
+	for start || cont != "" {
+		start = false
+		sq := search.SearchQuery{
+			Expression: "has:location",
+			Describe: &search.DescribeRequest{
+				Rules: []*search.DescribeRule{
+					{
+						Attrs: []string{nodeattr.Latitude, nodeattr.Longitude},
+					},
 				},
 			},
-		},
-	}
-	sr, err := is.c.Query(&sq)
-	if err != nil {
-		return err
-	}
-	is.m = make(map[string]time.Time)
-	is.cam = make(map[string]camliInfo)
-	for _, srb := range sr.Blobs {
-		id := srb.Blob.String()
-		db := sr.Describe.Meta[id]
-		contentRef, ok := db.ContentRef()
-		if !ok || db.Permanode == nil {
-			continue
+			Continue: cont,
 		}
-		pna := db.Permanode.Attr
-		lat, err1 := strconv.ParseFloat(pna.Get(nodeattr.Latitude), 64)
-		lng, err2 := strconv.ParseFloat(pna.Get(nodeattr.Longitude), 64)
-		var ll *latlng
-		if err1 == nil && err2 == nil {
-			ll = &latlng{lat, lng}
+		sr, err := is.c.Query(&sq)
+		if err != nil {
+			return err
 		}
-		is.m[camliprefix+id] = db.Permanode.ModTime
-		is.cam[id] = camliInfo{
-			mt:      db.Permanode.ModTime,
-			ploc:    ll,
-			content: contentRef,
+		cont = sr.Continue
+		if is.m == nil {
+			is.m = make(map[string]time.Time)
+		}
+		if is.cam == nil {
+			is.cam = make(map[string]camliInfo)
+		}
+		for _, srb := range sr.Blobs {
+			id := srb.Blob.String()
+			db := sr.Describe.Meta[id]
+			contentRef, ok := db.ContentRef()
+			if !ok || db.Permanode == nil {
+				continue
+			}
+			pna := db.Permanode.Attr
+			lat, err1 := strconv.ParseFloat(pna.Get(nodeattr.Latitude), 64)
+			lng, err2 := strconv.ParseFloat(pna.Get(nodeattr.Longitude), 64)
+			var ll *latlng
+			if err1 == nil && err2 == nil {
+				ll = &latlng{lat, lng}
+			}
+			is.m[camliprefix+id] = db.Permanode.ModTime
+			is.cam[id] = camliInfo{
+				mt:      db.Permanode.ModTime,
+				ploc:    ll,
+				content: contentRef,
+			}
 		}
 	}
 	return nil
