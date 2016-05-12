@@ -114,7 +114,8 @@ func main() {
 		http.ServeContent(w, r, "photos.json", ist, bytes.NewReader(buf.Bytes()))
 	})
 
-	handleWithPrefix("/tiles/", NewTileHandler(tm))
+	handleWithPrefix("/tile/spot/", NewTileHandler(tm.SpotsTile))
+	handleWithPrefix("/tile/photo/", NewTileHandler(tm.PhotoTile))
 	http.Handle("/viewport.json", NewViewportPlaceHandler(tm))
 	http.Handle("/gallery.json", NewGalleryHandler(tm))
 

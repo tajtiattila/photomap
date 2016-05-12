@@ -5,6 +5,77 @@ function lat2merc(lat) {
     return 180.0 / Math.PI * Math.log(Math.tan(Math.PI/4 + lat * Math.PI/180.0/2.0));
 }
 
+function PhotoMapControl(controlDiv, map, spotsOverlay, photosOverlay) {
+  var control = this;
+
+  var photosShown = true;
+  var spotsShown = true;
+
+  controlDiv.className = "photomapcontrol";
+
+  var spotsUI = document.createElement('div');
+  spotsUI.style.borderTopLeftRadius = "3px";
+  spotsUI.style.borderBottomLeftRadius = "3px";
+  spotsUI.className = "photomapui";
+  spotsUI.id = 'spotsUI';
+  spotsUI.title = 'Click to toggle photos spots';
+  controlDiv.appendChild(spotsUI);
+
+  var spotsText = document.createElement('div');
+  spotsText.style.fontWeight = "500";
+  spotsText.className = "photomapuitext";
+  spotsText.id = 'spotsText';
+  spotsText.innerHTML = 'Spots';
+  spotsUI.appendChild(spotsText);
+
+  var photosUI = document.createElement('div');
+  photosUI.style.borderTopRightRadius = "3px";
+  photosUI.style.borderBottomRightRadius = "3px";
+  photosUI.className = "photomapui";
+  photosUI.id = 'photosUI';
+  photosUI.title = 'Click to toggle photo icons';
+  controlDiv.appendChild(photosUI);
+
+  var photosText = document.createElement('div');
+  photosText.style.fontWeight = "500";
+  photosText.className = "photomapuitext";
+  photosText.id = 'photosText';
+  photosText.innerHTML = 'Photos';
+  photosUI.appendChild(photosText);
+
+  photosUI.addEventListener('click', function() {
+    if (photosShown) {
+      var i = map.overlayMapTypes.indexOf(photosOverlay);
+      if (i != -1) {
+        map.overlayMapTypes.removeAt(i);
+      }
+    } else {
+      map.overlayMapTypes.push(photosOverlay);
+    }
+    photosShown = !photosShown;
+    photosText.style.fontWeight = photosShown ? "500" : "400";
+  });
+
+  spotsUI.addEventListener('click', function() {
+    if (spotsShown) {
+      var i = map.overlayMapTypes.indexOf(spotsOverlay);
+      if (i != -1) {
+        map.overlayMapTypes.removeAt(i);
+      }
+    } else {
+      // insert before photosOverlay, if shown
+      var i = map.overlayMapTypes.indexOf(photosOverlay);
+      if (i != -1) {
+        map.overlayMapTypes.insertAt(i, spotsOverlay);
+      } else {
+        map.overlayMapTypes.push(spotsOverlay);
+      }
+    }
+    spotsShown = !spotsShown;
+    spotsText.style.fontWeight = spotsShown ? "500" : "400";
+  });
+}
+
 function initMap(mapElement, startAt, startZoom) {
   // Basic options for a simple Google Map
   // For more options see: https://developers.google.com/maps/documentation/javascript/reference#MapOptions
@@ -37,6 +108,7 @@ function initMap(mapElement, startAt, startZoom) {
     sidebar.style.visibility = "hidden";
     mapElem.style.left = "0%";
     mapElem.style.width = "100%";
+    google.maps.event.trigger(map, 'resize');
   }
   function showGallery(lat, lng) {
     var u = ['gallery.json?la=', lat, '&lo=', lng,
@@ -51,6 +123,7 @@ function initMap(mapElement, startAt, startZoom) {
       sidebar.style.visibility = "visible";
       mapElem.style.left = "25%";
       mapElem.style.width = "75%";
+      google.maps.event.trigger(map, 'resize');
       var thumbs = [];
       for (var i = 0; i < gal.length; i++) {
         thumbs.push(['<img src="thumb/' + gal[i] + '"/>'].join(''));
@@ -108,9 +181,17 @@ function initMap(mapElement, startAt, startZoom) {
   });
 
   // init overlays
+  var spotOverlay = new google.maps.ImageMapType({
+    getTileUrl: function(coord, zoom) {
+      return ['/tile/spot/', coord.x, '_', coord.y, '_', zoom].join('');
+    },
+    opacity: 0.5,
+    tileSize: google.maps.Size(256, 256)
+  });
+  map.overlayMapTypes.push(spotOverlay);
   var photoOverlay = new google.maps.ImageMapType({
     getTileUrl: function(coord, zoom) {
-      return ['/tiles/', coord.x, '_', coord.y, '_', zoom].join('');
+      return ['/tile/photo/', coord.x, '_', coord.y, '_', zoom].join('');
     },
     tileSize: google.maps.Size(256, 256)
   });
@@ -133,38 +214,12 @@ function initMap(mapElement, startAt, startZoom) {
     return div;
   };
 
-  /* debug map
-  map.overlayMapTypes.insertAt(
-      0, new CoordMapType(new google.maps.Size(256, 256)));
-  */
+  var pmControlDiv = document.createElement('div');
+  var pmControl = new PhotoMapControl(pmControlDiv, map, spotOverlay, photoOverlay);
 
-  // Load points
-  getJSON("photos.json", function(photos) {
-    var pts = [];
-    for (var i = 0; i < photos.length; i++) {
-      var p = photos[i];
-      pts.push(new google.maps.LatLng(p.lat, p.lng));
-    }
-    var heatmap = new google.maps.visualization.HeatmapLayer({
-      data: pts,
-      //map: map,
-      gradient: [
-        'rgba(255, 128, 0, 0)',
-        'rgba(255, 128, 0, 1)',
-        'rgba(255, 112, 0, 1)',
-        'rgba(255, 96, 0, 1)',
-        'rgba(255, 80, 0, 1)',
-        'rgba(255, 64, 0, 1)',
-        'rgba(255, 48, 0, 1)',
-        'rgba(255, 32, 0, 1)',
-        'rgba(255, 16, 0, 1)',
-        'rgba(255, 12, 0, 1)',
-        'rgba(255, 8, 0, 1)',
-        'rgba(255, 4, 0, 1)',
-        'rgba(255, 0, 0, 1)'
-      ]
-    });
-  });
+  pmControlDiv.index = 1;
+  pmControlDiv.style['padding-top'] = '10px';
+  map.controls[google.maps.ControlPosition.TOP_CENTER].push(pmControlDiv);
 }
 
 function init() {

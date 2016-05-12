@@ -12,11 +12,12 @@ import (
 	"math"
 	"math/rand"
 	"sort"
-	"sync"
 
 	"github.com/tajtiattila/photomap/clusterer"
 	"github.com/tajtiattila/photomap/imagecache"
 	"github.com/tajtiattila/photomap/quadtree"
+
+	"go4.org/syncutil/singleflight"
 )
 
 const TileSize = 256
@@ -31,13 +32,16 @@ type TileMap struct {
 	qt   *quadtree.Quadtree // for photo spots
 	tree *clusterer.Tree    // for photo piles
 
-	mtx sync.Mutex // protect gen
-	gen map[string]*genTile
+	spotg  singleflight.Group
+	photog singleflight.Group
+
+	emptyTile []byte // empty tile in png format
 
 	spot *image.RGBA // photo spot image
 }
 
 const photoMinSep = 5e-5 // ~5 meters on equator
+const spotSize = 16
 
 func NewTileMap(ic *imagecache.ImageCache) *TileMap {
 	images := ic.Images()
@@ -49,26 +53,32 @@ func NewTileMap(ic *imagecache.ImageCache) *TileMap {
 		qt:     quadtree.New(iiarr(images), quadtree.MinDist(photoMinSep)),
 		tree:   clusterer.NewTree(iiarr(images), photoMinSep),
 		images: images,
-		gen:    make(map[string]*genTile),
-		spot:   blurrySpot(color.NRGBA{255, 0, 0, 64}, 16),
+
+		emptyTile: pngBytes(image.NewNRGBA(image.Rect(0, 0, TileSize, TileSize))),
+		spot:      blurrySpot(color.NRGBA{255, 0, 0, 64}, spotSize),
 	}
 	tm.findStartLocation()
 	return tm
 }
 
-func (tm *TileMap) GetTile(x, y, zoom int) []byte {
+func (tm *TileMap) PhotoTile(x, y, zoom int) []byte {
 	k := fmt.Sprintf("%d|%d|%d", x, y, zoom)
 
-	tm.mtx.Lock()
-	gt, ok := tm.gen[k]
-	if !ok {
-		gt = &genTile{x: x, y: y, zoom: zoom}
-		tm.gen[k] = gt
-	}
-	tm.mtx.Unlock()
+	r, _ := tm.photog.Do(k, func() (interface{}, error) {
+		return tm.photoTile(x, y, zoom), nil
+	})
 
-	gt.init(tm)
-	return gt.image
+	return r.([]byte)
+}
+
+func (tm *TileMap) SpotsTile(x, y, zoom int) []byte {
+	k := fmt.Sprintf("%d|%d|%d", x, y, zoom)
+
+	r, _ := tm.spotg.Do(k, func() (interface{}, error) {
+		return tm.spotsTile(x, y, zoom), nil
+	})
+
+	return r.([]byte)
 }
 
 // PhotoPlaces returns clickable places with galleries within the requested boundary,
@@ -152,45 +162,45 @@ func (tm *TileMap) findStartLocationOfs(lofs float64, set bool) (width float64) 
 	return dx
 }
 
-func (tm *TileMap) generate(x, y, zoom int) []byte {
-	const thumbSize = 20
-
-	// safety gap for elements hanging over tile boundaries
-	const gap = (thumbSize * 1.5) / TileSize
-
-	xo, yo := float64(x), float64(y)
-
-	xmi := float64(x) - gap
-	ymi := float64(y) - gap
-	xma := float64(x+1) + gap
-	yma := float64(y+1) + gap
-
-	t := newTiler(zoom)
-	lami, lomi := t.LatLong(xmi, yma)
-	lama, loma := t.LatLong(xma, ymi)
-	if lama < lami || loma < lomi {
-		panic("invalid")
-	}
+func (tm *TileMap) spotsTile(x, y, zoom int) []byte {
+	t := makeTileInfo(x, y, zoom, spotSize)
 
 	im := image.NewRGBA(image.Rect(0, 0, TileSize, TileSize))
 
 	// draw spots
-	tm.qt.NearFunc(lomi, lat2merc(lami), loma, lat2merc(lama), func(i int) bool {
+	ndrawn := 0
+	tm.qt.NearFunc(t.lo0, lat2merc(t.la0), t.lo1, lat2merc(t.la1), func(i int) bool {
 		ii := tm.images[i]
-		x, y := t.Tile(ii.Lat, ii.Long)
-		px := int((x - xo) * TileSize)
-		py := int((y - yo) * TileSize)
+		px, py := t.pixel(ii.Lat, ii.Long)
 
 		dx := tm.spot.Bounds().Dx()
 		dy := tm.spot.Bounds().Dy()
-		x0 := px - dx/2
-		y0 := py - dy/2
-		draw.Draw(im, image.Rect(x0, y0, x0+dx, y0+dy), tm.spot, tm.spot.Bounds().Min, draw.Over)
+		xo := int(px) - dx/2
+		yo := int(py) - dy/2
+		r := image.Rect(xo, yo, xo+dx, yo+dy)
+		if r.Overlaps(im.Bounds()) {
+			ndrawn++
+			draw.Draw(im, r, tm.spot, tm.spot.Bounds().Min, draw.Over)
+		}
 		return true
 	})
-	setAlpha(im, 127)
+
+	if ndrawn == 0 {
+		return tm.emptyTile
+	}
+
+	return pngBytes(im)
+}
+
+func (tm *TileMap) photoTile(x, y, zoom int) []byte {
+	const thumbSize = 20
+
+	t := makeTileInfo(x, y, zoom, thumbSize)
+
+	im := image.NewRGBA(image.Rect(0, 0, TileSize, TileSize))
 
 	// draw photo piles
+	ndrawn := 0
 	drawPhoto := func(px, py float64, ii imagecache.ImageInfo) {
 		thumb, err := tm.ic.PhotoIcon(ii.Id)
 		if err != nil {
@@ -200,53 +210,95 @@ func (tm *TileMap) generate(x, y, zoom int) []byte {
 
 		dx := thumb.Bounds().Dx()
 		dy := thumb.Bounds().Dy()
-		x0 := int(px) - dx/2
-		y0 := int(py) - dy/2
-		draw.Draw(im, image.Rect(x0, y0, x0+dx, y0+dy), thumb, thumb.Bounds().Min, draw.Over)
-	}
-	tm.tree.Query(lomi, lat2merc(lami), loma, lat2merc(lama), zoomdist(zoom), func(pt clusterer.Point, images []int) {
-		x, y := t.Tile(merc2lat(pt.Y), pt.X)
-		px := (x - xo) * TileSize
-		py := (y - yo) * TileSize
-
-		// have newest images first
-		vii := make([]imagecache.ImageInfo, len(images))
-		for i, x := range images {
-			vii[i] = tm.images[x]
+		xo := int(px) - dx/2
+		yo := int(py) - dy/2
+		r := image.Rect(xo, yo, xo+dx, yo+dy)
+		if r.Overlaps(im.Bounds()) {
+			ndrawn++
+			draw.Draw(im, r, thumb, thumb.Bounds().Min, draw.Over)
 		}
-		sort.Sort(sort.Reverse(iiByDate(vii)))
-
-		if len(vii) > 1 {
-			const (
-				pileMax       = 10
-				pileRadius    = thumbSize
-				pilePhotoArea = pileRadius * pileRadius * math.Pi / pileMax
-			)
-			if len(vii) > pileMax {
-				vii = vii[:pileMax]
-			}
-			area := float64(len(vii)) * pilePhotoArea
-			rmax := math.Sqrt(float64(area) / math.Pi)
-			rgen := newRgen(pt.X, pt.Y)
-			for _, ii := range vii[1:] {
-				sin, cos := math.Sincos(2 * math.Pi * rgen.Float64())
-				r := math.Sqrt(rgen.Float64()) * rmax
-				dx, dy := r*cos, r*sin
-				drawPhoto(px+dx, py+dy, ii)
-			}
-		}
-		drawPhoto(px, py, vii[0])
-	})
-	buf := new(bytes.Buffer)
-	err := png.Encode(buf, im)
-	if err != nil {
-		panic(err) // impossible
 	}
-	return buf.Bytes()
+	tm.tree.Query(t.lo0, lat2merc(t.la0), t.lo1, lat2merc(t.la1), zoomdist(zoom),
+		func(pt clusterer.Point, images []int) {
+			px, py := t.pixel(merc2lat(pt.Y), pt.X)
+
+			// have newest images first
+			vii := make([]imagecache.ImageInfo, len(images))
+			for i, x := range images {
+				vii[i] = tm.images[x]
+			}
+			sort.Sort(sort.Reverse(iiByDate(vii)))
+
+			if len(vii) > 1 {
+				const (
+					pileMax       = 10
+					pileRadius    = thumbSize
+					pilePhotoArea = pileRadius * pileRadius * math.Pi / pileMax
+				)
+				if len(vii) > pileMax {
+					vii = vii[:pileMax]
+				}
+				area := float64(len(vii)) * pilePhotoArea
+				rmax := math.Sqrt(float64(area) / math.Pi)
+				rgen := newRgen(pt.X, pt.Y)
+				for _, ii := range vii[1:] {
+					sin, cos := math.Sincos(2 * math.Pi * rgen.Float64())
+					r := math.Sqrt(rgen.Float64()) * rmax
+					dx, dy := r*cos, r*sin
+					drawPhoto(px+dx, py+dy, ii)
+				}
+			}
+			drawPhoto(px, py, vii[0])
+		})
+	if ndrawn == 0 {
+		return tm.emptyTile
+	}
+	return pngBytes(im)
+}
+
+type tileInfo struct {
+	tiler
+	xo, yo             float64
+	la0, lo0, la1, lo1 float64
+}
+
+func makeTileInfo(x, y, zoom int, thumbSize float64) tileInfo {
+	gap := (thumbSize * 1.5) / TileSize
+
+	xo, yo := float64(x), float64(y)
+
+	x0 := float64(x) - gap
+	y0 := float64(y) - gap
+	x1 := float64(x+1) + gap
+	y1 := float64(y+1) + gap
+
+	t := makeTiler(zoom)
+	la0, lo0 := t.LatLong(x0, y1)
+	la1, lo1 := t.LatLong(x1, y0)
+	if la1 < la0 || lo1 < lo0 {
+		panic("invalid")
+	}
+
+	return tileInfo{t, xo, yo, la0, lo0, la1, lo1}
+}
+
+func (t tileInfo) pixel(lat, long float64) (px, py float64) {
+	x, y := t.Tile(lat, long)
+	px = (x - t.xo) * TileSize
+	py = (y - t.yo) * TileSize
+	return
 }
 
 func zoomdist(zoom int) float64 {
 	return photoMinSep * math.Pow(2, float64(21-zoom))
+}
+
+func pngBytes(im image.Image) []byte {
+	buf := new(bytes.Buffer)
+	if err := png.Encode(buf, im); err != nil {
+		panic(err) // impossible
+	}
+	return buf.Bytes()
 }
 
 type iiByDate []imagecache.ImageInfo
@@ -261,39 +313,25 @@ func (s iiarr) Len() int                { return len(s) }
 func (s iiarr) At(i int) (x, y float64) { return s[i].Long, lat2merc(s[i].Lat) }
 func (s iiarr) Weight(i int) float64    { return 1 }
 
-type tiler struct {
-	m float64
+type tiler float64
+
+func makeTiler(zoom int) tiler {
+	return tiler(int(1) << uint(zoom))
 }
 
-func newTiler(zoom int) *tiler {
-	return &tiler{
-		m: float64(int(1) << uint(zoom)),
-	}
-}
-
-func (t *tiler) LatLong(x, y float64) (lat, long float64) {
-	long = x/t.m*360 - 180
-	n := math.Pi - 2*math.Pi*y/t.m
+func (t tiler) LatLong(x, y float64) (lat, long float64) {
+	m := float64(t)
+	long = x/m*360 - 180
+	n := math.Pi - 2*math.Pi*y/m
 	lat = 180 / math.Pi * math.Atan(0.5*(math.Exp(n)-math.Exp(-n)))
 	return
 }
 
-func (t *tiler) Tile(lat, long float64) (x, y float64) {
-	x = t.m * (long + 180) / 360
-	y = t.m * (1 - math.Log(math.Tan(lat*math.Pi/180)+1/math.Cos(lat*math.Pi/180))/math.Pi) / 2
+func (t tiler) Tile(lat, long float64) (x, y float64) {
+	m := float64(t)
+	x = m * (long + 180) / 360
+	y = m * (1 - math.Log(math.Tan(lat*math.Pi/180)+1/math.Cos(lat*math.Pi/180))/math.Pi) / 2
 	return
-}
-
-type genTile struct {
-	x, y, zoom int
-	once       sync.Once
-	image      []byte
-}
-
-func (gt *genTile) init(tm *TileMap) {
-	gt.once.Do(func() {
-		gt.image = tm.generate(gt.x, gt.y, gt.zoom)
-	})
 }
 
 // change global image alpha

@@ -13,7 +13,7 @@ import (
 	"github.com/tajtiattila/photomap/imagecache"
 )
 
-func NewTileHandler(tm *TileMap) http.Handler {
+func NewTileHandler(f func(x, y, zoom int) []byte) http.Handler {
 	starttime := time.Now()
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		s := req.URL.Path
@@ -43,8 +43,8 @@ func NewTileHandler(tm *TileMap) http.Handler {
 		}
 		xmask := (1 << uint(zoom)) - 1
 		x = x & xmask
-		rawimg := tm.GetTile(x, y, zoom)
-		http.ServeContent(w, req, "tile.png", starttime, bytes.NewReader(rawimg))
+		data := f(x, y, zoom)
+		http.ServeContent(w, req, "tile.png", starttime, bytes.NewReader(data))
 	})
 }
 

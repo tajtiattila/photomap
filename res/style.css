@@ -17,6 +17,25 @@
 #thumbs>img {
   padding: 1px;
 }
+
+.photomapcontrol {
+  z-index: 1;
+  clear: both;
+}
+.photomapui {
+  background: #fff;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px -1px rgba(0,0,0,.3);
+  cursor: pointer;
+  margin-bottom: 22px;
+  text-align: center;
+  display: inline-block;
+}
+.photomapuitext {
+  color: #444;
+  padding: 8px;
+}
+
 #map {
   position:absolute;
   left:0%;
