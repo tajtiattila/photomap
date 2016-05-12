@@ -76,13 +76,10 @@ function PhotoMapControl(controlDiv, map, spotsOverlay, photosOverlay) {
   });
 }
 
-function initMap(mapElement, startAt, startZoom) {
+function initMap(mapElement, bounds) {
   // Basic options for a simple Google Map
   // For more options see: https://developers.google.com/maps/documentation/javascript/reference#MapOptions
   var mapOptions = {
-      center: startAt,
-      zoom: startZoom,
-
       minZoom: 3,
       scaleControl: true,
 
@@ -93,6 +90,7 @@ function initMap(mapElement, startAt, startZoom) {
 
   // Create the Google Map using our element and options defined above
   var map = new google.maps.Map(mapElement, mapOptions);
+  map.fitBounds(bounds);
 
   var bounds, lastBounds;
   var markers = [];
@@ -234,28 +232,16 @@ function init() {
   var sy = mapElement.clientHeight / TILESIZE;
 
   getJSON("bounds.json", function(b) {
-    var l = function(x) {/*console.log(x)*/}
-    l(b);
-    var center = new google.maps.LatLng(b['lat'], b['long']);
-    var dx = b['dlong'];
-    var dy = lat2merc(b['dlat']);
-    l([
-      "px=", b['dlong'], " py=", b['dlat'],
-      " dx=", dx, " dy=", dy,
-      " sx=", sx, " sy=", sy].join(''));
-    var zoom = 3;
-    for (; zoom < 18; zoom++) {
-      // arc of one tile at next zoom level
-      var tile = 360.0 / Math.pow(2, zoom+1);
-      l(["zoom=", zoom+1,
-        " tile=", tile,
-        " sx*tile=", sx*tile, " sy*tile=", sy*tile].join(''));
-      if (dx > sx*tile || dy > sy*tile) {
-        break;
-      }
-    }
-    l(["initial zoom=", zoom].join(''));
-    initMap(mapElement, center, zoom);
+    var lat = b.lat;
+    var lng = b.long;
+    var dlat = b.dlat/2;
+    var dlng = b.dlong/2;
+    initMap(mapElement, {
+      north: lat+dlat,
+      west: lng-dlng,
+      east: lng+dlng,
+      south: lat-dlat
+    });
   })
 }
 
